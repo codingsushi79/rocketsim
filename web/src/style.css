@@ -100,3 +100,4 @@ td.key { width: 140px; color: var(--accent-2); font-family: ui-monospace, monosp
   .menu-panel.main { left: 16px; right: 16px; }
   .menu-buttons { width: 100%; }
 }
+#ui > .settings { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
