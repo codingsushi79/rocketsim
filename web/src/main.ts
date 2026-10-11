@@ -205,7 +205,7 @@ async function main(): Promise<void> {
     let v = vehicleViews.get(sc.vehicle.def.model);
     if (!v) {
       status.textContent = `Loading ${sc.vehicle.def.name}…`;
-      v = await VehicleView.load(sc.vehicle.def, engine);
+      v = await VehicleView.load(sc.vehicle.def);
       vehicleViews.set(sc.vehicle.def.model, v);
     }
     world.setVehicle(v);

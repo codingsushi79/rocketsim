@@ -9,23 +9,28 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Telemetry, VehicleDef, Vec3 } from "../sim/vehicle";
-import type { Engine } from "./engine";
 import { PRE_EXPOSURE } from "./units";
+
+/** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
+const PLUME_RADIANCE_U = 0.6;
+const PUFF_RADIANCE_U = 0.5;
 
 /** Rotation taking +X onto unit vector `d`. */
 function quatFromX(d: Vec3): THREE.Quaternion {
   return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(d[0], d[1], d[2]).normalize());
 }
 
-/** Exhaust glow drawn at a fixed display brightness (divided by the current
- *  exposure), so plumes read the same in sunlight and in shadow. A hypergolic vacuum
- *  plume is physically faint; this is a deliberate visual aid, not a radiometric model. */
-function exhaustMaterial(engine: Engine, color: THREE.Color): THREE.ShaderMaterial {
+/** Exhaust glow with a fixed radiance of `radianceU` (units of U, see units.ts) at
+ *  the core. A hypergolic vacuum plume is physically much fainter: this is a
+ *  deliberate visual aid at about the brightness of a sunlit hull, not a radiometric
+ *  model. It must stay a fixed radiance: dividing by the exposure (as overlays do)
+ *  makes a feedback loop with the auto-exposure, which meters the plume. */
+function exhaustMaterial(color: THREE.Color, radianceU: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       color: { value: color },
       intensity: { value: 0 },
-      exposureTex: engine.exposureUniform,
+      radiance: { value: radianceU },
       preExposure: PRE_EXPOSURE,
       time: { value: 0 },
     },
@@ -47,19 +52,23 @@ function exhaustMaterial(engine: Engine, color: THREE.Color): THREE.ShaderMateri
       #include <logdepthbuf_pars_fragment>
       uniform vec3 color;
       uniform float intensity;
-      uniform sampler2D exposureTex;
+      uniform float radiance;
       uniform float preExposure;
       uniform float time;
       varying float vAlong;
       varying float vFacing;
       void main() {
         #include <logdepthbuf_fragment>
-        float flicker = 0.92 + 0.08 * sin(time * 97.0 + vAlong * 23.0);
-        float a = intensity * pow(1.0 - vAlong, 1.6) * pow(vFacing, 1.5) * flicker;
-        float e = exp2(texture2D(exposureTex, vec2(0.5)).r);
+        // Clamp first: with MSAA, varyings are evaluated at sample points slightly
+        // outside the triangle, and pow() of a negative number is NaN (which bloom
+        // then spreads over the whole frame).
+        float along = clamp(vAlong, 0.0, 1.0);
+        float facing = clamp(vFacing, 0.0, 1.0);
+        float flicker = 0.92 + 0.08 * sin(time * 97.0 + along * 23.0);
+        float a = intensity * pow(1.0 - along, 1.6) * pow(facing, 1.5) * flicker;
         // Hotter, whiter core near the nozzle.
-        vec3 c = mix(color, vec3(1.0, 0.95, 0.9), pow(1.0 - vAlong, 6.0));
-        gl_FragColor = vec4(c * a * preExposure / max(e, 1e-12), 1.0);
+        vec3 c = mix(color, vec3(1.0, 0.95, 0.9), pow(1.0 - along, 6.0));
+        gl_FragColor = vec4(c * (a * radiance * preExposure), 1.0);
       }`,
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -99,7 +108,7 @@ export class VehicleView {
     this.root.add(this.model);
   }
 
-  static async load(def: VehicleDef, engine: Engine): Promise<VehicleView> {
+  static async load(def: VehicleDef): Promise<VehicleView> {
     const v = new VehicleView(def);
     const gltf = await new GLTFLoader().loadAsync(def.model);
     v.model.add(gltf.scene);
@@ -113,7 +122,7 @@ export class VehicleView {
       const shape = part && part.shape !== "point" ? part.shape.cone_shell : undefined;
       const exitR = typeof shape?.base_radius === "number" ? shape.base_radius : 0.5;
       const len = part ? Math.abs(part.position[0] - e.position[0]) : 2;
-      const plume = new THREE.Mesh(plumeGeometry(1), exhaustMaterial(engine, new THREE.Color(1.0, 0.55, 0.35)));
+      const plume = new THREE.Mesh(plumeGeometry(1), exhaustMaterial(new THREE.Color(1.0, 0.55, 0.35), PLUME_RADIANCE_U));
       plume.position.set(-len, 0, 0);
       plume.renderOrder = 10;
       node.add(plume);
@@ -123,7 +132,7 @@ export class VehicleView {
     for (const g of def.rcs) {
       const list: VehicleView["puffs"][number] = [];
       for (const t of g.thrusters) {
-        const m = new THREE.Mesh(puffGeo, exhaustMaterial(engine, new THREE.Color(0.85, 0.85, 0.95)));
+        const m = new THREE.Mesh(puffGeo, exhaustMaterial(new THREE.Color(0.85, 0.85, 0.95), PUFF_RADIANCE_U));
         // Exhaust leaves opposite the force direction.
         const ex: Vec3 = [-t.direction[0], -t.direction[1], -t.direction[2]];
         m.quaternion.copy(quatFromX([-ex[0], -ex[1], -ex[2]]));
