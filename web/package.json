@@ -14,7 +14,8 @@
     "canary": "node scripts/canary.mjs",
     "preview": "vite preview",
     "fixtures": "mkdir -p public/ephemeris && cp ../crates/sim-core/tests/fixtures/ephem_2026q4.rseph public/ephemeris/",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "models": "node ../tools/models/build_vehicle_glb.mjs ../data/vehicles/rs1_corvid.json public/models/rs1_corvid.glb"
   },
   "dependencies": {
     "three": "0.186.1"

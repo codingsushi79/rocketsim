@@ -50,6 +50,10 @@ jobs:
           wasm=$(node web/scripts/canary.mjs)
           echo "native=$native wasm=$wasm"
           test "$native" = "$wasm"
+      - name: Vehicle models match their JSON definitions
+        run: |
+          node tools/models/build_vehicle_glb.mjs data/vehicles/rs1_corvid.json web/public/models/rs1_corvid.glb
+          git diff --exit-code -- web/public/models
       - run: npm run build
         working-directory: web
 
