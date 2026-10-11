@@ -7,8 +7,8 @@
 | 2 | Ephemeris pipeline (DE440 + satellite SPKs, Chebyshev runtime, Horizons tests, IAU rotation, Earth EOP) | ✅ Done |
 | 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ✅ Done |
 | 4 | First render + **main menu and settings shell** (D11) | ✅ Done |
-| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ✅ Done, awaiting review |
-| 6 | Map view and maneuver nodes | |
+| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ✅ Done |
+| 6 | Map view and maneuver nodes | ✅ Done, awaiting review |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | |
 | 8 | Rest of the solar system | |
 | 9 | Transfer planner (Lambert, porkchop, n-body correction) | |
@@ -286,4 +286,76 @@ Plan: `docs/plans/M5-spacecraft.md`. Vehicle rationale and numbers: `docs/spacec
 - The physics warp limit (10×) and on-rails behaviour are game-design choices. Please
   confirm them.
 - Plume and RCS puffs are a visual aid with a fixed radiance, not a radiometric model.
+
+## M6: map view and maneuver nodes (2026-10-11)
+
+Plan: `docs/plans/M6-map-and-maneuvers.md`.
+
+**What exists**
+- **Core** (`maneuver.rs`, `prediction.rs`, autopilot in `flight.rs`):
+  - Mission plan data model: legs of nodes with Δv as prograde/normal/radial at the node.
+    It is multi-leg-ready for M9 and serialisable for M10.
+  - Plan prediction: each node is a finite burn of the real engine, flown by the same n-body
+    propagator.
+    - Burn time from Tsiolkovsky at the predicted mass; the burn is split so half the Δv
+      comes before the node.
+    - The node vector is evaluated on the trajectory with the earlier nodes applied.
+    - Horizon: 1.05 orbits past the last burn when bound inside the SOI, else 30 days
+      (configurable), or until impact.
+  - Markers, root-found on the dense output:
+    - apoapsis and periapsis per SOI patch, with altitude and time;
+    - SOI changes and impact;
+    - closest approach to the target;
+    - ascending and descending nodes relative to the target's orbital plane, with relative
+      inclination.
+  - Map geometry: adaptive path sampling in any frame centre, osculating body conics, Laplace
+    SOI radii, ground track (WGS84 latitude for Earth).
+  - Burn autopilot:
+    - holds the node vector, ignites at the planned start;
+    - tapers the throttle and cuts off at the target Δv;
+    - stops on-rails warp 30 s before ignition.
+- **Web**:
+  - Map view (M): ecliptic-aligned camera; zoom from LEO to the outer planets.
+  - Lines: the coast prediction (blue) and the plan (orange), coloured per SOI patch; body
+    orbits sized to the zoom; SOI rings for the centre and the target.
+  - Markers with time-to; body labels (click to focus).
+  - Click the trajectory to add a node. Drag the six prograde/normal/radial handles (rate
+    grows with drag distance, Caps Lock for fine), or type values, or shift the node in time.
+  - Node panel: Δv, burn time, burn start, plan total, Δv left after the plan.
+  - Execute/abort the autopilot; status and planned-vs-actual report.
+  - Ground track (G); distances to nearby bodies; HUD node and autopilot countdown; navball
+    maneuver marker. Target cycling (Y) feeds the closest-approach and AN/DN markers.
+
+**Verification**
+- `tests/prediction.rs` (6 tests):
+  - a zero node leaves the prediction unchanged;
+  - the impulsive limit matches **vis-viva to the millimetre** (apoapsis 7,143,590.285 m) and
+    the half period to 1 ms;
+  - burn time matches Tsiolkovsky to 1e-9 s, and half the Δv comes before the node;
+  - apsides on an e = 0.3 orbit match Kepler (radius < 1 cm, time < 1 ms);
+  - AN/DN lie on the Moon's orbital plane with the correct direction and relative inclination;
+    closest approach is a true distance minimum;
+  - the autopilot executes a planned 150 m/s burn: ignition +2 ms, Δv 149.992 m/s, position
+    4 m from the plan, **apoapsis 30 m from the plan**.
+- In the browser, full force model (EGM2008 8×8, drag, SRP, third bodies): the same burn
+  reports periapsis −0.6 m, apoapsis −31 m and closest approach to the Moon +8.6 m vs plan.
+- Playwright `e2e/map.spec.ts`: map → markers → node → burn time → execute at warp → warp
+  stops at T−30 s → burn → report (Δv within 0.2 m/s, apoapsis within 1 km). The full suite is
+  7 tests.
+- Rust: 131 tests. Canary unchanged.
+- Re-prediction while editing a node: about 25–35 ms in the browser for a multi-day
+  translunar plan.
+- Screenshots: `docs/screenshots/m6-*.jpg`.
+
+**Fixed along the way**
+- Propagator: extending exactly to a burn's start time overshot the boundary, so the start of
+  the burn was skipped. The boundary is now hit exactly. Canary unchanged.
+
+**Known limitations / next**
+- The autopilot holds the inertial node vector (as the prediction assumes). Closed-loop
+  guidance on the remaining Δv vector can come later if long burns need it.
+- Burns below the 0.4 s minimum on-time overshoot slightly. RCS-only nodes (capsule after
+  separation) are not executable by the autopilot yet.
+- The ground track uses texture imagery for Earth only.
+- Gravity-assist legs and Lambert targeting are M9. The data model is in place.
 
