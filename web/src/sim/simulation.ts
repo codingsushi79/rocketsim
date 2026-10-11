@@ -3,6 +3,7 @@
 
 import { Sim } from "../wasm/sim_wasm.js";
 import type { SimSettings } from "../settings";
+import { RS1, type Telemetry, type VehicleSource } from "./vehicle";
 
 /** Warp levels, 1× to 10,000,000× (spec §2.2). */
 export const WARP_LEVELS = [1, 5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] as const;
@@ -10,6 +11,28 @@ export const WARP_LEVELS = [1, 5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000
 /** Per-frame budget for propagation work. At warp levels that would exceed it, the
  *  clock advances only as far as the budget allows (shown as "warp limited"). */
 const FRAME_BUDGET_MS = 8;
+
+/** Highest warp with step-by-step (50 Hz) vehicle physics. Above it the vehicle
+ *  coasts on rails, which needs every actuator idle. */
+export const PHYSICS_WARP_MAX = 10;
+
+/** Pilot inputs, sent to the core every frame. */
+export interface FlightControls {
+  /** Roll, pitch, yaw stick in [−1, 1] (body x, y, z). */
+  rotation: [number, number, number];
+  /** Translation in [−1, 1] (body x forward, y right, z down). */
+  translation: [number, number, number];
+  throttle: number;
+  /** SAS mode index (see SAS_MODES). */
+  sas: number;
+  rcs: boolean;
+  fine: boolean;
+  /** 0 orbit, 1 surface, 2 target. */
+  speedRef: number;
+}
+
+export const SAS_MODES = ["Off", "Hold", "Prograde", "Retrograde", "Normal", "Anti-normal", "Radial out", "Radial in", "Target", "Anti-target", "Maneuver"] as const;
+export const SPEED_REFS = ["Orbit", "Surface", "Target"] as const;
 
 export interface Scenario {
   id: string;
@@ -21,19 +44,24 @@ export interface Scenario {
   inclinationDeg: number;
   raanDeg: number;
   massKg: number;
+  /** Fly this vehicle (6-DOF); without it, a cannonball of `massKg`. */
+  vehicle?: VehicleSource;
 }
 
 export const SCENARIOS: Scenario[] = [
   {
     id: "leo400",
     name: "Low Earth orbit, 400 km",
-    description: "Circular 400 km orbit at 51.6° inclination, 1 November 2026. The v1 spacecraft arrives in M5; a placeholder flies here for now.",
+    description: "RS-1 Corvid in a circular 400 km orbit at 51.6° inclination, 1 November 2026. Full tanks: about 3.45 km/s of main-engine Δv, enough for a lunar flyby.",
     epochUtc: "2026-11-01T00:00:00Z",
     center: 399,
     altitudeM: 400e3,
     inclinationDeg: 51.6,
-    raanDeg: 0,
-    massKg: 15_000,
+    // The spawn point is the ascending node; the Sun is near RA 216° on 1 Nov 2026,
+    // so a node at 200° starts the mission in daylight.
+    raanDeg: 200,
+    massKg: 24_960,
+    vehicle: RS1,
   },
 ];
 
@@ -58,6 +86,11 @@ export class Simulation {
   /** True when the last frame could not keep up with the requested warp. */
   warpLimited = false;
   scenario: Scenario | null = null;
+  controls: FlightControls = { rotation: [0, 0, 0], translation: [0, 0, 0], throttle: 0, sas: 1, rcs: true, fine: false, speedRef: 0 };
+  /** True when warp was capped because the vehicle needs step-by-step physics. */
+  warpCapped = false;
+  private telemetryCache: { frame: number; t: Telemetry | null } = { frame: -1, t: null };
+  private frame = 0;
 
   /** Load ephemeris for the decade of `epochUtc`, falling back to the CI subset. */
   async loadEphemeris(epochUtc: string, onProgress?: (msg: string) => void): Promise<void> {
@@ -87,7 +120,13 @@ export class Simulation {
     this.scenario = sc;
     this.sim.setEpochUtc(sc.epochUtc);
     this.applySettings(settings);
-    this.sim.spawnCircular(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg, sc.massKg);
+    if (sc.vehicle) {
+      this.sim.loadVehicle(sc.vehicle.text);
+      this.sim.spawnVehicle(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg);
+      this.controls = { rotation: [0, 0, 0], translation: [0, 0, 0], throttle: 0, sas: 1, rcs: true, fine: false, speedRef: 0 };
+    } else {
+      this.sim.spawnCircular(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg, sc.massKg);
+    }
     this.warpIndex = 0;
     this.paused = false;
   }
@@ -104,9 +143,36 @@ export class Simulation {
     this.warpIndex = Math.max(this.warpIndex - 1, 0);
   }
 
+  get hasVehicle(): boolean {
+    return this.scenario?.vehicle !== undefined;
+  }
+
+  /** Telemetry for this frame (parsed once per frame). */
+  telemetry(): Telemetry | null {
+    if (!this.hasVehicle) return null;
+    if (this.telemetryCache.frame !== this.frame) {
+      const txt = this.sim.telemetry();
+      this.telemetryCache = { frame: this.frame, t: txt ? (JSON.parse(txt) as Telemetry) : null };
+    }
+    return this.telemetryCache.t;
+  }
+
+  stage(): void {
+    this.sim.stage();
+  }
+
   /** Advance by `realDt` seconds of wall time × warp, within the frame budget. */
   tick(realDt: number): void {
+    this.frame++;
     if (this.paused || !this.scenario) return;
+    if (this.hasVehicle) {
+      const c = this.controls;
+      this.sim.setControls(c.rotation[0], c.rotation[1], c.rotation[2], c.translation[0], c.translation[1], c.translation[2], c.throttle, c.sas, c.rcs, c.fine, c.speedRef);
+      // Warp above the physics limit only while nothing fires (as in KSP).
+      this.warpCapped = this.sim.needsPhysics() && this.warp > PHYSICS_WARP_MAX;
+      if (this.warpCapped) this.warpIndex = WARP_LEVELS.indexOf(PHYSICS_WARP_MAX);
+      this.sim.setRailsAllowed(this.warp > PHYSICS_WARP_MAX);
+    }
     const want = Math.min(realDt, 0.25) * this.warp;
     const t0 = performance.now();
     // Sub-chunks keep the budget check responsive. Chunking cannot change results:

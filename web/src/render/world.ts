@@ -9,7 +9,8 @@ import { BODY_TINT, EarthView, GEOMETRIC_ALBEDO, PlainBody, SunView } from "./bo
 import { OrbitCamera } from "./camera";
 import type { Engine } from "./engine";
 import { MilkyWay, PlanetPoints, StarField, lambertPhase } from "./sky";
-import { placeholderSpacecraft } from "./spacecraft";
+import { placeholderSpacecraft } from "./placeholder";
+import type { VehicleView } from "./spacecraft";
 import { PRE_EXPOSURE } from "./units";
 
 const AU = 149_597_870_700;
@@ -43,7 +44,10 @@ export class World {
   readonly camera: OrbitCamera;
   focus: number = FOCUS_SPACECRAFT;
   private bodies = new Map<number, BodyEntry>();
-  private spacecraft = placeholderSpacecraft();
+  private spacecraft: THREE.Object3D = placeholderSpacecraft();
+  private vehicle: VehicleView | null = null;
+  /** Jettisoned stages, by order of separation. */
+  private debris: THREE.Object3D[] = [];
   private sunLight = new THREE.DirectionalLight(0xffffff, 1);
   private earthshine = new THREE.DirectionalLight(0x9fb4d9, 0);
   private orbitLine: THREE.Line;
@@ -103,6 +107,16 @@ export class World {
       this.stars = new StarField(assets.stars, s.graphics.starLimitMag, this.yearsSinceJ2000());
       this.engine.skyScene.add(this.stars.points);
     }
+  }
+
+  /** Fly `v` (or the placeholder for `null`). */
+  setVehicle(v: VehicleView | null): void {
+    this.engine.scene.remove(this.spacecraft);
+    for (const d of this.debris) this.engine.scene.remove(d);
+    this.debris = [];
+    this.vehicle = v;
+    this.spacecraft = v ? v.root : placeholderSpacecraft();
+    this.engine.scene.add(this.spacecraft);
   }
 
   /** Focus targets in cycle order. */
@@ -197,13 +211,36 @@ export class World {
     }
     this.planetPoints.commit(nPoints, rpp);
 
-    // Spacecraft: prograde attitude (body +x along velocity, +z along the orbit normal).
+    // Spacecraft at its centre of mass. A flown vehicle has a real attitude (body →
+    // ICRF from the core); the placeholder points prograde (+z along the orbit normal).
     const scPos = sub(rsc, cam);
     this.spacecraft.position.set(scPos[0], scPos[1], scPos[2]);
-    const xb = vec(vsc).normalize();
-    const zb = vec(rsc).cross(vec(vsc)).normalize();
-    const yb = new THREE.Vector3().crossVectors(zb, xb);
-    this.spacecraft.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xb, yb, zb));
+    const att = this.vehicle ? s.attitude() : [];
+    if (att.length === 4) {
+      this.spacecraft.quaternion.set(att[1]!, att[2]!, att[3]!, att[0]!);
+      this.vehicle!.update(dt, this.sim.telemetry(), s.attachedStages());
+    } else {
+      const xb = vec(vsc).normalize();
+      const zb = vec(rsc).cross(vec(vsc)).normalize();
+      const yb = new THREE.Vector3().crossVectors(zb, xb);
+      this.spacecraft.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xb, yb, zb));
+    }
+    if (this.vehicle) {
+      const d = s.debris();
+      const n = Math.floor(d.length / 11);
+      for (let i = 0; i < n; i++) {
+        const o = i * 11;
+        let obj = this.debris[i];
+        if (!obj) {
+          obj = this.vehicle.stageModel(d[o]!, [d[o + 8]!, d[o + 9]!, d[o + 10]!]);
+          this.debris.push(obj);
+          this.engine.scene.add(obj);
+        }
+        obj.position.set(d[o + 1]! - cam[0], d[o + 2]! - cam[1], d[o + 3]! - cam[2]);
+        obj.quaternion.set(d[o + 5]!, d[o + 6]!, d[o + 7]!, d[o + 4]!);
+      }
+      while (this.debris.length > n) this.engine.scene.remove(this.debris.pop()!);
+    }
 
     // Lighting at the spacecraft: Sun (with eclipses) and earthshine from the center body.
     const toSun = sub(sunRel, rsc);

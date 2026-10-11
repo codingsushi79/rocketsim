@@ -15,6 +15,21 @@ export const KEYBINDINGS: [string, string][] = [
   ["O", "Toggle predicted orbit"],
   ["F3", "Debug overlay (FPS, integrator)"],
   ["Esc", "Pause menu"],
+  ["W / S", "Pitch down / up"],
+  ["A / D", "Yaw left / right"],
+  ["Q / E", "Roll left / right"],
+  ["H / N", "Translate forward / back (RCS)"],
+  ["J / L", "Translate left / right"],
+  ["I / K", "Translate up / down"],
+  ["Shift / Ctrl", "Throttle up / down"],
+  ["Z / X", "Full throttle / cut (throttle > 0 ignites)"],
+  ["Space (hold)", "Stage: separate the service module"],
+  ["T", "SAS on / off"],
+  ["1 … 0", "SAS: hold, prograde, retrograde, normal, anti-normal, radial out, radial in, target, anti-target, maneuver"],
+  ["R", "RCS on / off"],
+  ["Caps Lock", "Fine control (25 %)"],
+  ["V", "Speed reference: orbit / surface / target"],
+  ["Y", "Cycle target body"],
 ];
 
 export class SettingsPanel {
@@ -122,13 +137,30 @@ export class SettingsPanel {
           this.row("Geomagnetic Ap", this.slider(m.ap, 0, 400, 1, (v) => up((x) => (x.sim.ap = v)), (v) => v.toFixed(0))),
         );
       }
-      case "controls":
+      case "controls": {
+        const c = s.controls;
+        const pads = (navigator.getGamepads ? Array.from(navigator.getGamepads()) : []).filter((p): p is Gamepad => !!p);
+        const axisOpts: [number, string][] = [[-1, "—"], ...Array.from({ length: 8 }, (_, i): [number, string] => [i, `Axis ${i}`])];
         return h(
           "div",
           {},
+          this.row("Stick deadzone", this.slider(c.deadzone, 0, 0.3, 0.01, (v) => up((x) => (x.controls.deadzone = v)), (v) => `${Math.round(v * 100)}%`)),
+          this.row("Invert pitch", this.toggle(c.invertPitch, (v) => up((x) => (x.controls.invertPitch = v)))),
+          h("p", { class: "note" }, pads.length ? `Detected: ${pads.map((p) => `#${p.index} ${p.id} (${p.mapping || "generic"})`).join(" · ")}` : "No gamepad detected: press a button on it, then reopen this tab. Standard gamepads work without setup: left stick pitch/yaw, bumpers roll, right stick and d-pad translate, triggers throttle, A stage (hold), B SAS, X RCS, Y speed reference."),
+          this.row("HOTAS / joystick", this.toggle(c.hotas.enabled, (v) => (up((x) => (x.controls.hotas.enabled = v)), this.draw())), "Map a non-standard device's axes"),
+          ...(c.hotas.enabled
+            ? [
+                this.row("Device", this.select(c.hotas.padIndex, pads.length ? pads.map((p): [number, string] => [p.index, `#${p.index} ${p.id.slice(0, 40)}`]) : [[c.hotas.padIndex, `#${c.hotas.padIndex}`]], (v) => up((x) => (x.controls.hotas.padIndex = v)))),
+                this.row("Roll axis", this.select(c.hotas.roll, axisOpts, (v) => up((x) => (x.controls.hotas.roll = v)))),
+                this.row("Pitch axis", this.select(c.hotas.pitch, axisOpts, (v) => up((x) => (x.controls.hotas.pitch = v)))),
+                this.row("Yaw axis", this.select(c.hotas.yaw, axisOpts, (v) => up((x) => (x.controls.hotas.yaw = v)))),
+                this.row("Throttle axis", this.select(c.hotas.throttle, axisOpts, (v) => up((x) => (x.controls.hotas.throttle = v)))),
+                this.row("Invert throttle", this.toggle(c.hotas.invertThrottle, (v) => up((x) => (x.controls.hotas.invertThrottle = v)))),
+              ]
+            : []),
           h("table", { class: "keys" }, ...KEYBINDINGS.map(([k, d]) => h("tr", {}, h("td", { class: "key" }, k), h("td", {}, d)))),
-          h("p", { class: "note" }, "Rebinding, flight controls, gamepad and HOTAS arrive with the spacecraft in M5."),
         );
+      }
       case "audio":
         return h(
           "div",

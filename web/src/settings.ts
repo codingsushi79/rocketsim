@@ -49,12 +49,32 @@ export interface InterfaceSettings {
   showOrbit: boolean;
 }
 
+export interface HotasMapping {
+  enabled: boolean;
+  /** Gamepad API index of the stick/throttle device. */
+  padIndex: number;
+  /** Axis indices (−1 = unassigned). */
+  roll: number;
+  pitch: number;
+  yaw: number;
+  throttle: number;
+  invertThrottle: boolean;
+}
+
+export interface ControlSettings {
+  /** Stick deadzone, fraction of full deflection. */
+  deadzone: number;
+  invertPitch: boolean;
+  hotas: HotasMapping;
+}
+
 export interface Settings {
   version: 1;
   graphics: GraphicsSettings;
   sim: SimSettings;
   audio: AudioSettings;
   ui: InterfaceSettings;
+  controls: ControlSettings;
 }
 
 export const GRAPHICS_PRESETS: Record<Exclude<Preset, "custom">, Omit<GraphicsSettings, "preset" | "depthMode">> = {
@@ -71,6 +91,11 @@ export function defaultSettings(): Settings {
     sim: { rtol: 1e-12, earthDegree: 8, thirdBody: true, harmonics: true, drag: true, srp: true, f107: 150, f107a: 150, ap: 4 },
     audio: { master: 0.8, music: 0.6, effects: 0.8 },
     ui: { hudScale: 1, showFps: false, starBoost: 1, showOrbit: true },
+    controls: {
+      deadzone: 0.08,
+      invertPitch: false,
+      hotas: { enabled: false, padIndex: 0, roll: 0, pitch: 1, yaw: 5, throttle: 2, invertThrottle: true },
+    },
   };
 }
 
@@ -134,6 +159,7 @@ export class SettingsStore {
         sim: { ...d.sim, ...parsed.sim },
         audio: { ...d.audio, ...parsed.audio },
         ui: { ...d.ui, ...parsed.ui },
+        controls: { ...d.controls, ...parsed.controls, hotas: { ...d.controls.hotas, ...parsed.controls?.hotas } },
       };
     } catch {
       return d;

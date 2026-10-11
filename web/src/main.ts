@@ -8,7 +8,9 @@ import { World, type WorldAssets } from "./render/world";
 import { loadStars } from "./render/sky";
 import { Menus } from "./ui/menus";
 import { SettingsPanel } from "./ui/settingsPanel";
-import { Hud } from "./ui/hud";
+import { Hud, TARGET_CYCLE } from "./ui/hud";
+import { FlightInput } from "./ui/input";
+import { VehicleView } from "./render/spacecraft";
 import { h } from "./ui/dom";
 
 const params = new URLSearchParams(location.search);
@@ -26,6 +28,10 @@ interface TestHooks {
   readPixels(x: number, y: number, w: number, hgt: number): number[];
   regions?: { label: string; x: number; y: number; w: number; h: number }[];
   hudText?(): string;
+  /** The simulation driver (flight tests set controls and read telemetry). */
+  sim?: Simulation;
+  /** World camera (tests frame the vehicle). */
+  camera?: { setDistance(d: number, immediate?: boolean): void; setAngles(y: number, p: number, immediate?: boolean): void };
 }
 declare global {
   interface Window {
@@ -192,6 +198,19 @@ async function main(): Promise<void> {
   const assets = await loadAssets(settings.graphics.textureQuality, (m) => (status.textContent = m));
   sim.start(scenario, settings.sim);
   const world = new World(engine, sim, bodies, assets, settings);
+  // Vehicle models, loaded once per definition.
+  const vehicleViews = new Map<string, VehicleView>();
+  const useVehicle = async (sc: Scenario) => {
+    if (!sc.vehicle) return world.setVehicle(null);
+    let v = vehicleViews.get(sc.vehicle.def.model);
+    if (!v) {
+      status.textContent = `Loading ${sc.vehicle.def.name}…`;
+      v = await VehicleView.load(sc.vehicle.def, engine);
+      vehicleViews.set(sc.vehicle.def.model, v);
+    }
+    world.setVehicle(v);
+  };
+  await useVehicle(scenario);
   if (params.has("debug")) Object.assign(window, { rs: { sim, world, engine, THREE } });
 
   // UI.
@@ -199,6 +218,19 @@ async function main(): Promise<void> {
   let inGame = false;
   let settingsOpen = false;
   const hud = new Hud(sim, (d) => (d > 0 ? sim.warpUp() : sim.warpDown()), () => (sim.paused = !sim.paused));
+  hud.setBodyNames(new Map(bodies.map((b) => [b.id, b.name])));
+  hud.setVehicle(scenario.vehicle?.def ?? null);
+  const input = new FlightInput(
+    () => sim.controls,
+    () => store.get().controls,
+    {
+      stage: () => sim.stage(),
+      cycleTarget: () => {
+        hud.targetIndex = (hud.targetIndex + 1) % TARGET_CYCLE.length;
+        sim.sim.setTarget(TARGET_CYCLE[hud.targetIndex]!);
+      },
+    },
+  );
   const settingsPanel = new SettingsPanel(store, () => closeSettings(), () => engine.depth);
   let closeSettingsTo: () => void = () => {};
   const closeSettings = () => {
@@ -208,13 +240,17 @@ async function main(): Promise<void> {
   };
   const menus: Menus = new Menus(
     {
-      startMission(s) {
+      async startMission(s) {
         sim.start(s, store.get().sim);
+        await useVehicle(s);
+        hud.setVehicle(s.vehicle?.def ?? null);
+        hud.targetIndex = 0;
         engine.resetAdaptation();
         world.focus = -1;
         world.camera.minDistance = 1.5;
         world.camera.setDistance(35, true);
         inGame = true;
+        input.enabled = true;
         menus.hide();
         hud.show(true);
       },
@@ -231,6 +267,7 @@ async function main(): Promise<void> {
       },
       toMainMenu() {
         inGame = false;
+        input.enabled = false;
         hud.show(false);
         menus.main();
       },
@@ -281,6 +318,8 @@ async function main(): Promise<void> {
   const centerNames = new Map(bodies.map((b) => [b.id, b.name]));
   let last = performance.now();
   const step = (dt: number) => {
+    input.update(dt);
+    hud.stageProgress = input.stageProgress;
     if (inGame || testScene) sim.tick(dt);
     else world.camera.spin(dt * 0.02);
     world.update(dt);
@@ -307,6 +346,8 @@ async function main(): Promise<void> {
   if (testMode) {
     const hooks = makeTestHooks(engine, step);
     hooks.hudText = () => hud.root.textContent ?? "";
+    hooks.sim = sim;
+    hooks.camera = world.camera;
     window.__rocketsim = hooks;
   }
   const loop = (now: number) => {
