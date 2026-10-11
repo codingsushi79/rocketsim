@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["crates/sim-core", "crates/sim-cli", "crates/sim-wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[workspace.dependencies]
+sim-core = { path = "crates/sim-core" }
+# Pure-Rust libm: identical transcendental results on every target (decision D8).
+libm = "=0.2.16"
+# Must match the installed wasm-bindgen-cli exactly (see scripts/build-wasm.sh).
+wasm-bindgen = "=0.2.129"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+disallowed_methods = "deny"
+
+[profile.release]
+# Keep float semantics identical between debug and release: no fast-math exists in
+# Rust, and LTO/opt-level do not change IEEE results. Codegen units = 1 for
+# reproducible binaries.
+codegen-units = 1
+lto = "thin"
+
+[profile.release.package.sim-wasm]
+opt-level = "s"
