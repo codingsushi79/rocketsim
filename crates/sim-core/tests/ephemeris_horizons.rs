@@ -77,12 +77,13 @@ const TOLERANCES: &[(i32, f64, f64, &str)] = &[
     (605, 1_000.0, 0.01, "sat441 (same as Horizons)"),
     (606, 1_000.0, 0.01, "sat441 (same as Horizons)"),
     (608, 1_000.0, 0.01, "sat441 (same as Horizons)"),
-    // Model differences, not errors. Horizons' Neptune system (nep098) carries its own
-    // heliocentric orbit, which drifts from DE441's Neptune barycenter by ~2,000 km
-    // by 2100. Our Neptune–barycenter offset is the physical ~74 km. Triton is
-    // checked planet-relative in `moons_relative_to_their_planet_match_horizons`.
-    (899, 2_500_000.0, 0.05, "nep098 heliocentric orbit ≠ DE440"),
-    (801, 2_500_000.0, 10.0, "nep098 heliocentric orbit ≠ DE440"),
+    // Model difference, not an error. Horizons places Neptune and Triton with nep098,
+    // which is built on DE442's Neptune barycenter; we use DE440's barycenter (per
+    // spec, to match Horizons' DE441 planets) plus nep098's planet-relative offsets.
+    // DE440/441 vs DE442 Neptune differ by ~2,170 km by 2092. Triton is checked
+    // planet-relative (0.1 m) in `moons_relative_to_their_planet_match_horizons`.
+    (899, 2_500_000.0, 0.05, "DE440 vs DE442 Neptune barycenter"),
+    (801, 2_500_000.0, 10.0, "DE440 vs DE442 Neptune barycenter"),
     // sb441-n16 asteroid states are DE441 perturber integrations, which NAIF notes are
     // not best-estimate orbits. Horizons uses newer orbit solutions (JPL#48, #36).
     (2_000_001, 400_000.0, 0.05, "sb441-n16 vs Horizons JPL#48"),
@@ -111,6 +112,10 @@ fn barycentric_states_match_horizons() {
         w.0 = w.0.max(dr);
         w.1 = w.1.max(dv);
         let (tr, tv, why) = tolerance(r.naif);
+        // HORIZONS_REPORT=1 prints the table without asserting (diagnostics only).
+        if std::env::var("HORIZONS_REPORT").is_ok() {
+            continue;
+        }
         assert!(
             dr <= tr,
             "body {} at TDB {}: |Δr| = {dr:.1} m > {tr} m ({why})",
@@ -181,11 +186,8 @@ fn moons_relative_to_their_planet_match_horizons() {
         }
         assert!(compared >= 5, "{moon}: only {compared} epochs compared");
         eprintln!("{moon:>6} {planet:>6} {wr:>10.1} {wv:>12.5}");
-        // Triton: our nep097 vs Horizons' nep098 (NAIF, July 2026, a new orbit
-        // solution built on DE442). The ~709 km along-track difference by 2097 is that
-        // model update, not a fit error. See docs/PROGRESS.md (M2 open questions).
         // Moon vs Earth: DE440 vs Horizons' DE441 lunar orbit (~9 m).
-        let tol = if moon == 801 { 1_000_000.0 } else { 100.0 };
+        let tol = 100.0;
         assert!(
             wr <= tol,
             "{moon} relative to {planet}: {wr:.1} m > {tol} m"

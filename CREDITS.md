@@ -32,7 +32,8 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 | mar099.bsp | …/spk/satellites/ | Mars, Phobos, Deimos | R. A. Jacobson (JPL) |
 | jup365.bsp | …/spk/satellites/ | Jupiter, Galilean satellites | R. A. Jacobson (JPL) |
 | sat441.bsp | …/spk/satellites/ | Saturn, major satellites | R. A. Jacobson (JPL) |
-| nep097.bsp | …/spk/satellites/ | Neptune, Triton | R. A. Jacobson (JPL) |
+| nep098_part-1.bsp | …/spk/satellites/ | Neptune, Triton (2026 solution) | JPL SSD satellite ephemeris group |
+| ura111xl-799.bsp | …/spk/satellites/ | Uranus relative to its barycenter | JPL SSD satellite ephemeris group |
 | plu060.bsp | …/spk/satellites/ | Pluto relative to its barycenter | R. A. Jacobson / M. Brozović (JPL) |
 | sb441-n16.bsp | https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/ | Ceres, Vesta (DE441 perturbers) | Park et al. 2021 |
 - **License:** U.S. Government work (NASA/JPL), public domain in the U.S. NAIF/SSD ask that it be credited.

@@ -13,7 +13,8 @@ FILES=(
   "$NAIF/satellites/jup365.bsp"        # Galilean satellites
   "$NAIF/satellites/sat441.bsp"        # Major Saturnian satellites
   "$NAIF/satellites/mar099.bsp"        # Phobos, Deimos
-  "$NAIF/satellites/nep097.bsp"        # Triton
+  "$NAIF/satellites/nep098_part-1.bsp" # Neptune, Triton (DE442-based, 2026)
+  "$NAIF/satellites/ura111xl-799.bsp"  # Uranus relative to Uranus barycenter
   "$NAIF/satellites/plu060.bsp"        # Pluto relative to Pluto barycenter
   "$SSD/sb441-n16.bsp"                 # Ceres, Vesta (DE441 small-body perturbers)
 )

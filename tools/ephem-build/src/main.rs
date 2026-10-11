@@ -38,8 +38,10 @@ const SPAN_MOONS: (i64, i64) = (-DAY / 2, 36_524 * DAY + DAY / 2);
 #[derive(Clone, Copy)]
 enum Source {
     Kernel(&'static str),
-    /// No kernel available. The target coincides with its center (zero offset).
-    /// Used only for the Uranus body (see docs/plans/M2-ephemeris.md, open question 1).
+    /// No kernel available: the target coincides with its center (zero offset).
+    /// Unused since the Uranus kernel was added. Kept for future bodies whose
+    /// planet-vs-barycenter offset is not published.
+    #[allow(dead_code)]
     ZeroOffset,
 }
 
@@ -88,10 +90,10 @@ fn specs() -> Vec<Spec> {
         spec(606, 699, Kernel("sat441"), m),
         spec(608, 699, Kernel("sat441"), m),
         spec(7, 0, Kernel("de440"), p),
-        spec(799, 7, ZeroOffset, p),
+        spec(799, 7, Kernel("ura111xl-799"), p),
         spec(8, 0, Kernel("de440"), p),
-        spec(899, 8, Kernel("nep097"), p),
-        spec(801, 899, Kernel("nep097"), m),
+        spec(899, 8, Kernel("nep098_part-1"), p),
+        spec(801, 899, Kernel("nep098_part-1"), m),
         spec(9, 0, Kernel("de440"), p),
         spec(999, 9, Kernel("plu060"), p),
         spec(2_000_001, 10, Kernel("sb441-n16"), m),
@@ -362,7 +364,7 @@ fn meta(k: &Kernels, extra: &str) -> String {
     for (n, h) in &k.sha256 {
         m.push_str(&format!(" {n}.bsp sha256={h}"));
     }
-    m.push_str(" | 799 (Uranus) = Uranus barycenter (zero offset, no satellite kernel) | ");
+    m.push_str(" | ");
     m.push_str(extra);
     m
 }
