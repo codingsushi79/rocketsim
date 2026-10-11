@@ -69,6 +69,8 @@ export class Simulation {
       const res = await fetch(url);
       if (!res.ok) continue;
       const bytes = new Uint8Array(await res.arrayBuffer());
+      // Dev servers answer missing files with index.html (200): check the magic.
+      if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "RSEPH") continue;
       this.sim.loadEphemeris(bytes);
       return;
     }
