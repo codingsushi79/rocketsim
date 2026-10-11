@@ -12,12 +12,16 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "canary": "node scripts/canary.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "fixtures": "mkdir -p public/ephemeris && cp ../crates/sim-core/tests/fixtures/ephem_2026q4.rseph public/ephemeris/",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "three": "0.186.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "24.10.1",
     "@types/three": "0.186.0",
     "typescript": "7.0.2",
     "vite": "8.3.4"

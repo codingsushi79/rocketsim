@@ -502,3 +502,37 @@ fn integrator_converges_to_analytic_solution() {
     assert!(errors.windows(2).all(|w| w[1] < w[0] / 3.0), "{errors:?}");
     assert!(errors[3] < 1e-3, "{errors:?}");
 }
+
+#[test]
+fn pruning_history_does_not_change_the_future() {
+    let (e, reg) = (eph(), BodyRegistry::builtin());
+    let p = Propagator::new(&e, &reg);
+    let s0 = circular(
+        BodyId::EARTH,
+        gm::EARTH,
+        6_778_137.0,
+        51.6f64.to_radians(),
+        15_000.0,
+    );
+    let horizon = 4.0 * 3600.0;
+    let full = p.propagate(&s0, t0().add_seconds(horizon), &[]).unwrap();
+    // Extend in 10-minute chunks, pruning everything older than a minute each time
+    // (what the browser does every frame).
+    let mut pruned = p.propagate(&s0, t0(), &[]).unwrap();
+    let mut t = 0.0;
+    while t < horizon {
+        t += 600.0;
+        p.extend(&mut pruned, t0().add_seconds(t), &[]).unwrap();
+        pruned.prune_before(t0().add_seconds(t - 60.0));
+    }
+    let a = full.state_at(t0().add_seconds(horizon)).unwrap();
+    let b = pruned.state_at(t0().add_seconds(horizon)).unwrap();
+    assert_eq!(a.state.r.x.to_bits(), b.state.r.x.to_bits());
+    assert_eq!(a.state.v.z.to_bits(), b.state.v.z.to_bits());
+    assert!(
+        pruned.step_count() < full.step_count() / 4,
+        "{} vs {}",
+        pruned.step_count(),
+        full.step_count()
+    );
+}

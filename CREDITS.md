@@ -74,6 +74,34 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **License:** U.S. Government work (NRL), public domain in the U.S. The C translation by D. Brodowski was **not** used: it carries no license grant.
 - **Retrieved:** 2026-10-11
 
+### Earth day texture: Blue Marble Next Generation (November 2004, topography + bathymetry)
+- **Source:** https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73884/world.topo.bathy.200411.3x5400x2700.jpg (NASA Earth Observatory / Visible Earth)
+- **Reference:** R. Stöckli et al. (2005), "The Blue Marble Next Generation: A true color earth dataset including seasonal dynamics from MODIS", NASA Earth Observatory.
+- **License:** NASA imagery, free to use. Credit "NASA Earth Observatory".
+- **Derived files:** `web/public/assets/earth_day_2048.jpg` (committed), `earth_day_5400.jpg` (`scripts/fetch-assets.sh`)
+- **Retrieved:** 2026-10-11
+
+### Earth night lights: Black Marble 2016 (color, 3 km)
+- **Source:** https://eoimages.gsfc.nasa.gov/images/imagerecords/144000/144898/BlackMarble_2016_3km.jpg (NASA Earth Observatory)
+- **Reference:** NASA Earth Observatory images by Joshua Stevens, using Suomi NPP VIIRS data from Miguel Román, NASA GSFC.
+- **License:** NASA imagery, free to use with credit.
+- **Derived files:** `earth_night_2048.jpg` (committed), `earth_night_8192.jpg` (fetch script)
+- **Retrieved:** 2026-10-11
+
+### Milky Way: NASA SVS Deep Star Maps 2020 (`milkyway_2020_4k.exr`, celestial coordinates)
+- **Source:** https://svs.gsfc.nasa.gov/4851
+- **Credit:** NASA/Goddard Space Flight Center Scientific Visualization Studio. Gaia DR2: ESA/Gaia/DPAC. Hipparcos, Tycho-2: ESA.
+- **License:** NASA SVS media, free to use with credit.
+- **Derived files:** `milkyway_2048.jpg` (committed), `milkyway_4096.jpg` (fetch script), `milkyway.json` (encoding scale and the verified RA convention u = 0.5 − RA/360)
+- **Retrieved:** 2026-10-11
+
+### Hipparcos star catalog (V < 8): `web/public/assets/stars_hip_v8.bin`
+- **Source:** CDS VizieR, catalog I/239 (hip_main), query `-source=I/239/hip_main&-out=HIP,RAICRS,DEICRS,Vmag,B-V,pmRA,pmDE,Plx&Vmag=<8.0`
+- **Reference:** ESA (1997), *The Hipparcos and Tycho Catalogues*, ESA SP-1200.
+- **License:** Free for scientific and educational use with citation of ESA SP-1200 and CDS VizieR.
+- **Converter:** `tools/assets/prepare_stars.py`
+- **Retrieved:** 2026-10-11
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`
@@ -114,6 +142,7 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 | [three.js](https://threejs.org) | 0.186.1 | MIT | Rendering |
 | [Vite](https://vite.dev) | 8.3.4 | MIT | Web build/dev server |
 | [TypeScript](https://www.typescriptlang.org) | 7.0.2 | Apache-2.0 | Web app language |
+| [Playwright](https://playwright.dev) | 1.56.1 | Apache-2.0 | Rendering tests (dev only) |
 
 ## Algorithms (cited in code)
 - Calendar conversions: H. Hinnant, "chrono-Compatible Low-Level Date Algorithms" (public domain).
@@ -128,5 +157,8 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - Kepler/universal variables, elements, Hohmann, J2 rates: Vallado 4th ed. Alg. 8–10, §6.3, §9.6; Curtis 3rd ed. §3.7.
 - US Standard Atmosphere 1976: NOAA-S/T 76-1562 (NASA-TM-X-74335).
 - Mars atmosphere: NASA Glenn Research Center, "Mars Atmosphere Model". Venus: NASA GSFC Venus Fact Sheet. Titan: Fulchignoni et al. 2005, Nature 438:785 (Huygens HASI).
-- Solar irradiance: IAU 2015 Resolution B3 (1361 W/m²).
+- Solar irradiance: IAU 2015 Resolution B3 (1361 W/m²); solar V magnitude −26.74.
+- Atmospheric scattering: Nishita et al. (1993); O'Neil, GPU Gems 2 ch. 16; Earth parameters from E. Bruneton, IEEE TVCG 2017.
+- Star colors: B−V → temperature, Ballesteros (2012), EPL 97:34008.
+- Planet geometric albedos for point sources: NASA GSFC planetary fact sheets.
 - Rotation matrices: D. A. Vallado, *Fundamentals of Astrodynamics and Applications*, 4th ed., §3.3.

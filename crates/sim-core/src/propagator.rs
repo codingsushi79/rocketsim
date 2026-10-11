@@ -229,6 +229,33 @@ impl Trajectory {
     pub fn step_count(&self) -> usize {
         self.arcs.iter().map(|a| a.steps.len()).sum()
     }
+
+    /// Drop history before `t` (keeps the step containing `t`, and always the last
+    /// step, so extension stays bit-identical). Bounds memory during long runs.
+    pub fn prune_before(&mut self, t: Epoch) {
+        // Whole arcs that ended before t (never the last one).
+        while self.arcs.len() > 1
+            && self.arcs[0]
+                .base
+                .add_seconds(self.arcs[0].t_end)
+                .seconds_since(t)
+                < 0.0
+        {
+            self.arcs.remove(0);
+        }
+        let a = &mut self.arcs[0];
+        let local = t.seconds_since(a.base);
+        let keep_from = a
+            .steps
+            .partition_point(|s| s.t1() < local)
+            .min(a.steps.len().saturating_sub(1));
+        if keep_from > 0 {
+            a.steps.drain(..keep_from);
+            let first = &a.steps[0];
+            a.t_start = first.t0;
+            a.y_start = first.eval(first.t0);
+        }
+    }
 }
 
 fn to_state(epoch: Epoch, center: BodyId, y: &[f64; 7]) -> ScState {
@@ -489,39 +516,47 @@ impl ArcModel<'_> {
     /// overlap of the apparent solar and occulting disks (Montenbruck & Gill 2000,
     /// §3.4.2, eqs. 3.85–3.89).
     fn shadow(&self, r: V3, s_sun: V3, t: Epoch) -> f64 {
-        let to_sun = s_sun - r;
-        let ds = to_sun.norm();
-        let a = fmath::asin((radii::SUN.a / ds).min(1.0));
         let mut nu: f64 = 1.0;
         for &(b, radius) in &self.occulters {
-            let to_body = if b == self.center {
-                -r
+            let pos = if b == self.center {
+                V3::ZERO
             } else {
-                self.rel(b, t) - r
+                self.rel(b, t)
             };
-            let db = to_body.norm();
-            if db >= ds || radius <= 0.0 {
-                continue; // farther than the Sun can't occult
-            }
-            let bb = fmath::asin((radius / db).min(1.0));
-            let c = fmath::acos((to_sun.dot(to_body) / (ds * db)).clamp(-1.0, 1.0));
-            let f = if c >= a + bb {
-                1.0
-            } else if c <= bb - a {
-                0.0 // total eclipse (umbra)
-            } else if c <= a - bb {
-                1.0 - (bb * bb) / (a * a) // annular
-            } else {
-                let x = (c * c + a * a - bb * bb) / (2.0 * c);
-                let y = (a * a - x * x).max(0.0).sqrt();
-                let area = a * a * fmath::acos((x / a).clamp(-1.0, 1.0))
-                    + bb * bb * fmath::acos(((c - x) / bb).clamp(-1.0, 1.0))
-                    - c * y;
-                1.0 - area / (core::f64::consts::PI * a * a)
-            };
-            nu = nu.min(f);
+            nu = nu.min(occultation(r, s_sun, pos, radius));
         }
         nu
+    }
+}
+
+/// Fraction of the solar disk visible from `r` when one body of `radius` sits at
+/// `body` (all positions relative to the same center). Conical model: overlap of the
+/// apparent solar and occulting disks (Montenbruck & Gill 2000, §3.4.2, eqs. 3.85–3.89).
+/// Returns 1 for full sun and 0 in the umbra.
+pub fn occultation(r: V3, s_sun: V3, body: V3, radius: f64) -> f64 {
+    let to_sun = s_sun - r;
+    let ds = to_sun.norm();
+    let to_body = body - r;
+    let db = to_body.norm();
+    if db >= ds || radius <= 0.0 {
+        return 1.0; // farther than the Sun: can't occult
+    }
+    let a = fmath::asin((radii::SUN.a / ds).min(1.0));
+    let bb = fmath::asin((radius / db).min(1.0));
+    let c = fmath::acos((to_sun.dot(to_body) / (ds * db)).clamp(-1.0, 1.0));
+    if c >= a + bb {
+        1.0
+    } else if c <= bb - a {
+        0.0 // total eclipse (umbra)
+    } else if c <= a - bb {
+        1.0 - (bb * bb) / (a * a) // annular
+    } else {
+        let x = (c * c + a * a - bb * bb) / (2.0 * c);
+        let y = (a * a - x * x).max(0.0).sqrt();
+        let area = a * a * fmath::acos((x / a).clamp(-1.0, 1.0))
+            + bb * bb * fmath::acos(((c - x) / bb).clamp(-1.0, 1.0))
+            - c * y;
+        1.0 - area / (core::f64::consts::PI * a * a)
     }
 }
 

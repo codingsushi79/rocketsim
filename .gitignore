@@ -11,3 +11,9 @@ web/src/wasm/
 .claude/*
 !.claude/launch.json
 web/public/ephemeris/
+# High-resolution textures (scripts/fetch-assets.sh); 2048-px versions are committed.
+web/public/assets/earth_day_5400.jpg
+web/public/assets/earth_night_8192.jpg
+web/public/assets/milkyway_4096.jpg
+web/test-results/
+web/playwright-report/

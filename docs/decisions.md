@@ -34,3 +34,11 @@ Decisions confirmed with the project owner. Changing any of these needs their si
 | D16 | Gravity GM convention | Monopoles use DE440's TDB-compatible GMs, consistent with the ephemeris and the TDB clock. EGM2008 coefficients are used with zero-tide C̄₂₀ (IERS 2010 eq. 6.14), since solid tides are not modelled. Harmonic degree is capped at 70 by the unnormalized recursion. |
 | D17 | Atmosphere scope | Earth: US76 below 86 km, NRLMSISE-00 (thermospheric branch, daily-Ap mode) above, log-linear blend over 86–91 km. Space weather is configurable (default F10.7 = 150, Ap = 4) until a real space-weather feed is added. Mars/Venus/Titan use documented low-fidelity profiles in v1. |
 | D18 | Center switching and body resolution | Integration center = innermost SOI (Laplace radius from the current parent distance), 2% exit hysteresis. A planetary system is one barycentric point mass until within 10 SOI radii. Pluto is always a barycenter (Charon is not a v1 body), and Uranus carries its system GM (its moons are not v1 bodies). |
+
+## M4 (2026-10-11)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| D19 | Radiometry and exposure | One physical radiance unit for everything, U = E☉(1 au)/π per sr: sunlit Lambertian ρ·E·cosθ, solar disk ≈ 46,240 U, stars from V magnitudes, Milky Way calibrated so map white = 20 mag/arcsec² (documented assumption). **Pre-exposure** keeps fp16 buffers in range. GPU auto-exposure meters lit pixels (> 1% of the frame) like a camera, else the dark sky (dark-adapted). Default "Physical" star visibility means stars vanish in sunlit views. Boosts ×1e3/×1e5 are player options. |
+| D20 | Depth | Reversed-Z float depth when EXT_clip_control exists, logarithmic depth otherwise. Both are verified 2 m → 6e11 m by automated tests, with a standard-depth negative control. |
+| D21 | Rendering tests | Playwright on headless Chromium (SwiftShader) in CI: depth precision, floating-origin jitter near Saturn, UI smoke. Perf is measured separately on a real GPU (`PERF=1`). Final 4070 numbers need the owner's machine. |

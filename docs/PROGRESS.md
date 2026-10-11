@@ -6,8 +6,8 @@
 | 1 | Project skeleton | ✅ Done |
 | 2 | Ephemeris pipeline (DE440 + satellite SPKs, Chebyshev runtime, Horizons tests, IAU rotation, Earth EOP) | ✅ Done |
 | 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ✅ Done |
-| 4 | First render + **main menu and settings shell** (D11) | ⏳ In progress (owner: continue straight from M3) |
-| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | |
+| 4 | First render + **main menu and settings shell** (D11) | ✅ Done, awaiting review |
+| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ⏳ Next |
 | 6 | Map view and maneuver nodes | |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | |
 | 8 | Rest of the solar system | |
@@ -155,3 +155,53 @@
 - Mars/Venus/Titan atmospheres are low-fidelity profiles.
 - Solid/ocean tides, relativity (PN terms) and Earth albedo/IR pressure aren't modelled. Each is
   sub-meter-per-day in LEO; they will be added if a validation case needs them.
+
+## M4: first render + menu and settings shell (2026-10-11)
+
+**What exists** (`npm --prefix web run dev` after `./scripts/build-wasm.sh`):
+- WASM `Sim` API (ephemeris, TDB clock, spawn, warp-invariant `advance`, states, body
+  frames, eclipse factor, orbit info, predicted path, history pruning).
+- Renderer:
+  - floating origin; reversed-Z float depth with log fallback;
+  - HDR in physical units with pre-exposure, GPU auto-exposure, bloom, AgX;
+  - Earth on the WGS84 ellipsoid with IERS orientation (Blue Marble day, Black Marble night);
+  - single-scattering atmosphere post-pass (Rayleigh/Mie/ozone, depth-aware);
+  - Hipparcos starfield (41k stars, proper motion, colors) and Milky Way;
+  - planets and moons as lit spheres or point sources;
+  - placeholder spacecraft with Sun + eclipse + earthshine lighting; predicted-orbit line.
+- Camera: free orbit, log zoom 1 m → AU, focus cycling ([ ]).
+- Game shell (D11):
+  - main menu, mission select, credits, pause menu;
+  - settings (Graphics presets Low → Max, Simulation, Controls, Audio, Interface), persisted;
+  - HUD: UTC/TDB, warp 1×–10⁷× with "warp limited" under CPU budget, orbit panel, F3 debug.
+
+**Verification**
+- Rendering tests (Playwright, 5 tests):
+  - no z-fighting from 2 m to 6e11 m in both reversed-Z and log depth, and the
+    standard-depth control fails as expected (proving the test is sensitive);
+  - consecutive frames 2 m from the hull near Saturn identical (max diff ≤ 2/255);
+  - menu → mission → HUD 400 km / 92-min period, with no console errors.
+- Sky orientation: Orion, Aldebaran, Sirius and Antares in the right places (east-left
+  view from inside). The Milky Way map's RA convention was verified on the Magellanic
+  Clouds.
+- Physics hookups:
+  - eclipse factor 0 in Earth's umbra on the night side;
+  - correct seasonal lighting (Antarctica sunlit in November, subsolar ≈ 14°S, 169°E at 00:45 UTC).
+- Performance on Apple M4 integrated GPU, 2560×1440, synchronous timing with GPU sync:
+
+| Preset | Frame time |
+|---|---|
+| Max | 18.7 ms |
+| High | 18.0 ms |
+| Medium | 6.4 ms |
+
+  MSAA on fp16 targets dominates on this tile-based GPU. RTX 4070 estimate: ~3 ms at Max
+  (to be measured on the owner's machine).
+- Rust: 96 tests; canary native = WASM = `99e74aa0dc0af768`.
+
+**Known limitations / next**
+- Single scattering only. Bruneton multiple scattering, clouds and ocean glint come in M7.
+- Moon and planets have uniform albedo until M8 textures.
+- Spacecraft is a placeholder (M5).
+- Propagation runs on the main thread with an 8 ms budget; moving it to a Web Worker is in M10.
+- Milky Way brightness is a calibration assumption (white = 20 mag/arcsec²).

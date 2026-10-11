@@ -1,6 +1,37 @@
 import "./style.css";
 import * as THREE from "three";
-import { loadCore } from "./core";
+import { loadCore, type BodyRow } from "./core";
+import { SettingsStore, type DepthMode } from "./settings";
+import { SATURN_TEST, SCENARIOS, Simulation, type Scenario } from "./sim/simulation";
+import { Engine } from "./render/engine";
+import { World, type WorldAssets } from "./render/world";
+import { loadStars } from "./render/sky";
+import { Menus } from "./ui/menus";
+import { SettingsPanel } from "./ui/settingsPanel";
+import { Hud } from "./ui/hud";
+import { h } from "./ui/dom";
+
+const params = new URLSearchParams(location.search);
+const testScene = params.get("scene"); // "depth-test" | "saturn-jitter"
+const forcedDepth = params.get("depth") as DepthMode | "standard" | null;
+const testMode = params.has("test") || testScene !== null;
+
+/** Test hooks (only with ?test or ?scene=…). */
+interface TestHooks {
+  ready: boolean;
+  depth: string;
+  frame(n?: number): Promise<void>;
+  /** One synchronous simulation + render step (for timing). */
+  stepNow(dt: number): void;
+  readPixels(x: number, y: number, w: number, hgt: number): number[];
+  regions?: { label: string; x: number; y: number; w: number; h: number }[];
+  hudText?(): string;
+}
+declare global {
+  interface Window {
+    __rocketsim?: TestHooks;
+  }
+}
 
 function el(id: string): HTMLElement {
   const e = document.getElementById(id);
@@ -8,64 +39,289 @@ function el(id: string): HTMLElement {
   return e;
 }
 
-// Minimal three.js scene that proves the rendering stack. The real renderer
-// (floating origin, log depth, atmosphere) arrives in M4.
-function startScene(canvas: HTMLCanvasElement): void {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-  camera.position.set(0, 0, 4);
-  const globe = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(1, 3),
-    new THREE.MeshBasicMaterial({ color: 0x3d7bd9, wireframe: true }),
-  );
-  scene.add(globe);
-  const resize = () => {
-    const { innerWidth: w, innerHeight: h } = window;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+async function loadTexture(url: string): Promise<THREE.Texture> {
+  return new THREE.TextureLoader().loadAsync(url);
+}
+
+async function loadAssets(quality: "standard" | "high", status: (s: string) => void): Promise<WorldAssets> {
+  const hi = quality === "high";
+  const pick = async (high: string, std: string) => {
+    if (hi) {
+      try {
+        return await loadTexture(high);
+      } catch {
+        // High-resolution assets are optional (scripts/fetch-assets.sh).
+      }
+    }
+    return loadTexture(std);
   };
-  window.addEventListener("resize", resize);
-  resize();
-  renderer.setAnimationLoop((t) => {
-    globe.rotation.y = t * 1e-4;
-    renderer.render(scene, camera);
+  status("Loading textures…");
+  const [day, night, milkyWay] = await Promise.all([
+    pick("assets/earth_day_5400.jpg", "assets/earth_day_2048.jpg"),
+    pick("assets/earth_night_8192.jpg", "assets/earth_night_2048.jpg"),
+    pick("assets/milkyway_4096.jpg", "assets/milkyway_2048.jpg"),
+  ]);
+  status("Loading star catalog…");
+  const stars = await loadStars("assets/stars_hip_v8.bin");
+  return { day, night, milkyWay, stars };
+}
+
+function makeTestHooks(engine: Engine, step: (dt: number) => void): TestHooks {
+  const gl = engine.renderer.getContext();
+  return {
+    ready: false,
+    depth: engine.depth,
+    frame: (n = 1) =>
+      new Promise((resolve) => {
+        let left = n;
+        const tick = () => {
+          step(1 / 60);
+          if (--left <= 0) resolve();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    stepNow: step,
+    readPixels(x, y, w, hgt) {
+      const buf = new Uint8Array(w * hgt * 4);
+      // GL origin is bottom-left; callers pass top-left coordinates.
+      const H = engine.renderer.domElement.height;
+      gl.readPixels(x, H - y - hgt, w, hgt, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      return Array.from(buf);
+    },
+  };
+}
+
+/** Depth-precision test scene (spec §1/§6): for each distance from 2 m to 6e11 m (Jupiter),
+ *  a green quad sits in front of a red one with a relative gap of 1e-3. Any z-fighting
+ *  shows up as red pixels in the green region. */
+function runDepthTest(engine: Engine): void {
+  engine.forceExposure(1);
+  const distances = [2, 1e3, 1e6, 1e9, 6e11];
+  const regions: TestHooks["regions"] = [];
+  engine.resize();
+  const cam = engine.camera;
+  cam.position.set(0, 0, 0);
+  cam.lookAt(0, 0, -1);
+  cam.near = 0.05;
+  cam.updateProjectionMatrix();
+  const W = engine.pixelSize.x, H = engine.pixelSize.y;
+  const halfH = Math.tan(((cam.fov / 2) * Math.PI) / 180);
+  distances.forEach((d, i) => {
+    const xNdc = -0.8 + (1.6 * i) / (distances.length - 1);
+    const xView = xNdc * halfH * cam.aspect;
+    const size = 0.12 * d * halfH;
+    for (const [color, dist] of [[0x00ff00, d], [0xff0000, d * (1 + 1e-3)]] as const) {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(size * (dist / d), size * (dist / d)),
+        new THREE.ShaderMaterial({
+          uniforms: { c: { value: new THREE.Color(color) } },
+          vertexShader: `#include <common>\n#include <logdepthbuf_pars_vertex>\nvoid main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);\n#include <logdepthbuf_vertex>\n}`,
+          fragmentShader: `#include <common>\n#include <logdepthbuf_pars_fragment>\nuniform vec3 c; void main(){\n#include <logdepthbuf_fragment>\ngl_FragColor = vec4(c, 1.0); }`,
+        }),
+      );
+      m.position.set(xView * dist, 0, -dist);
+      engine.scene.add(m);
+    }
+    const px = ((xNdc + 1) / 2) * W, py = H / 2;
+    const half = Math.floor(0.04 * H);
+    regions.push({ label: `${d} m`, x: Math.round(px - half), y: Math.round(py - half), w: 2 * half, h: 2 * half });
   });
+  const hooks = makeTestHooks(engine, (dt) => engine.render(dt, null));
+  hooks.regions = regions;
+  window.__rocketsim = hooks;
+  const loop = () => {
+    engine.render(1 / 60, null);
+    hooks.ready = true;
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+/** Sky check (?scene=sky&ra=deg&dec=deg&fov=deg): stars and Milky Way only, camera
+ *  pointed at a celestial direction, for verifying catalog positions (e.g. Orion). */
+async function runSkyView(engine: Engine): Promise<void> {
+  const { MilkyWay, StarField, radecToVector } = await import("./render/sky");
+  const ra = (Number(params.get("ra") ?? 83.8) * Math.PI) / 180;
+  const dec = (Number(params.get("dec") ?? -1) * Math.PI) / 180;
+  engine.camera.fov = Number(params.get("fov") ?? 40);
+  const assets = await loadAssets("standard", () => {});
+  const stars = new StarField(assets.stars, 8, 26.8);
+  const mw = new MilkyWay(assets.milkyWay);
+  const boost = Number(params.get("boost") ?? 1);
+  engine.skyScene.add(mw.mesh, stars.points);
+  const dir = radecToVector(ra, dec);
+  engine.camera.up.set(0, 0, 1);
+  engine.camera.lookAt(dir);
+  engine.camera.updateMatrixWorld();
+  const loop = () => {
+    engine.resize();
+    stars.update(engine.radiansPerPixel, boost);
+    mw.setBoost(boost);
+    engine.render(1 / 60, null);
+    requestAnimationFrame(loop);
+  };
+  loop();
 }
 
 async function main(): Promise<void> {
-  startScene(el("view") as HTMLCanvasElement);
-  const core = await loadCore();
-  el("version").textContent = `sim-core ${core.version} (WASM)`;
-  el("canary").textContent = core.canary;
+  const canvas = el("view") as HTMLCanvasElement;
+  const status = el("boot-status");
+  const store = new SettingsStore();
+  const settings = store.get();
+  const engine = new Engine(canvas, settings.graphics, forcedDepth ?? undefined, testMode);
+  window.addEventListener("resize", () => engine.resize());
 
-  const tbody = el("bodies").querySelector("tbody")!;
-  for (const b of core.bodies) {
-    const tr = document.createElement("tr");
-    for (const v of [b.id, b.name, b.gm.toExponential(6), ((b.radii[0] + b.radii[1]) / 2000).toFixed(1)]) {
-      const td = document.createElement("td");
-      td.textContent = String(v);
-      tr.appendChild(td);
-    }
-    tbody.appendChild(tr);
+  if (testScene === "depth-test") {
+    el("boot").classList.add("hidden");
+    runDepthTest(engine);
+    return;
   }
-  el("body-count").textContent = String(core.bodies.length);
+  if (testScene === "sky") {
+    el("boot").classList.add("hidden");
+    await runSkyView(engine);
+    return;
+  }
 
-  const tick = () => {
-    // The browser clock ignores leap seconds; that only matters while one is
-    // being inserted, and this is a display clock.
-    const utc = new Date().toISOString();
-    const tdb = core.utcToTdbSeconds(utc);
-    el("utc").textContent = utc + (core.isProvisionalUtc(utc) ? " (provisional)" : "");
-    el("tdb").textContent = `${tdb.toFixed(3)} s past J2000 TDB`;
+  status.textContent = "Loading physics core…";
+  const core = await loadCore();
+  const bodies: BodyRow[] = core.bodies;
+  const sim = new Simulation();
+  const scenario: Scenario = testScene === "saturn-jitter" ? SATURN_TEST : SCENARIOS[0]!;
+  await sim.loadEphemeris(scenario.epochUtc, (m) => (status.textContent = m));
+  const assets = await loadAssets(settings.graphics.textureQuality, (m) => (status.textContent = m));
+  sim.start(scenario, settings.sim);
+  const world = new World(engine, sim, bodies, assets, settings);
+  if (params.has("debug")) Object.assign(window, { rs: { sim, world, engine, THREE } });
+
+  // UI.
+  const ui = el("ui");
+  let inGame = false;
+  let settingsOpen = false;
+  const hud = new Hud(sim, (d) => (d > 0 ? sim.warpUp() : sim.warpDown()), () => (sim.paused = !sim.paused));
+  const settingsPanel = new SettingsPanel(store, () => closeSettings(), () => engine.depth);
+  let closeSettingsTo: () => void = () => {};
+  const closeSettings = () => {
+    settingsOpen = false;
+    settingsPanel.root.remove();
+    closeSettingsTo();
   };
-  tick();
-  setInterval(tick, 100);
+  const menus: Menus = new Menus(
+    {
+      startMission(s) {
+        sim.start(s, store.get().sim);
+        engine.resetAdaptation();
+        world.focus = -1;
+        world.camera.minDistance = 1.5;
+        world.camera.setDistance(35, true);
+        inGame = true;
+        menus.hide();
+        hud.show(true);
+      },
+      openSettings(back) {
+        settingsOpen = true;
+        closeSettingsTo = back;
+        menus.hide();
+        ui.append(settingsPanel.render());
+      },
+      resume() {
+        sim.paused = false;
+        menus.hide();
+        hud.show(true);
+      },
+      toMainMenu() {
+        inGame = false;
+        hud.show(false);
+        menus.main();
+      },
+    },
+    core.version,
+  );
+  ui.append(menus.root, hud.root);
+  store.subscribe((s) => {
+    engine.applySettings(s.graphics);
+    world.applySettings(s, assets);
+    sim.applySettings(s.sim);
+    hud.setScale(s.ui.hudScale);
+  });
+  hud.setScale(settings.ui.hudScale);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (e.key === "Escape") {
+      if (settingsOpen) closeSettings();
+      else if (inGame) {
+        if (menus.root.classList.contains("hidden")) {
+          sim.paused = true;
+          hud.show(false);
+          menus.pause();
+        } else menus.hide(), hud.show(true), (sim.paused = false);
+      }
+      return;
+    }
+    if (!inGame) return;
+    switch (e.key) {
+      case ".": sim.warpUp(); break;
+      case ",": sim.warpDown(); break;
+      case "/": sim.warpIndex = 0; break;
+      case "p": case "P": sim.paused = !sim.paused; break;
+      case "]": world.cycleFocus(1); break;
+      case "[": world.cycleFocus(-1); break;
+      case "o": case "O": store.update((s) => (s.ui.showOrbit = !s.ui.showOrbit)); break;
+      case "F3": hud.debug = !hud.debug; e.preventDefault(); break;
+    }
+  });
+
+  el("boot").classList.add("hidden");
+
+  // Menu background: the scenario seen from afar, slowly turning.
+  world.camera.setDistance(2.2e7, true);
+  world.camera.minDistance = 1.5;
+
+  const centerNames = new Map(bodies.map((b) => [b.id, b.name]));
+  let last = performance.now();
+  const step = (dt: number) => {
+    if (inGame || testScene) sim.tick(dt);
+    else world.camera.spin(dt * 0.02);
+    world.update(dt);
+    engine.render(dt, world.atmo);
+    hud.update(dt, world.focusName(), centerNames.get(world.centerId) ?? "?", { showFps: store.get().ui.showFps, depth: engine.depth });
+  };
+
+  if (testScene === "saturn-jitter") {
+    // Fixed exposure and a camera 2 m from the hull, so frames can be compared exactly.
+    engine.forceExposure(50);
+    // 6 m from the center: ~2 m from the 2 m-radius hull.
+    world.camera.minDistance = 1;
+    world.camera.setDistance(6, true);
+    world.camera.setAngles(2.2, 0.1, true);
+    const hooks = makeTestHooks(engine, step);
+    hooks.hudText = () => hud.root.textContent ?? "";
+    window.__rocketsim = hooks;
+    step(1 / 60);
+    hooks.ready = true;
+    return; // the test drives frames explicitly
+  }
+
+  menus.main();
+  if (testMode) {
+    const hooks = makeTestHooks(engine, step);
+    hooks.hudText = () => hud.root.textContent ?? "";
+    window.__rocketsim = hooks;
+  }
+  const loop = (now: number) => {
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    step(dt);
+    if (window.__rocketsim) window.__rocketsim.ready = true;
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
 }
 
 main().catch((e: unknown) => {
-  el("version").textContent = `failed to load core: ${String(e)}`;
   console.error(e);
+  const s = document.getElementById("boot-status");
+  if (s) s.textContent = `Failed to start: ${String(e)}`;
+  document.body.append(h("div", { class: "fatal" }, String(e)));
 });

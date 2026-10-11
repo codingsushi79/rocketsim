@@ -1,0 +1,18 @@
+{
+  "mapping": "u = (0.5 - RA/360) mod 1, v = (90 - Dec)/180 from the top (ICRS/J2000)",
+  "landmark_brightness_vs_median": {
+    "LMC": 15.801454642649647,
+    "SMC": 11.32698195577479
+  },
+  "source": "NASA SVS Deep Star Maps 2020, milkyway_2020_4k.exr (celestial, equirectangular)",
+  "linear_from_srgb_scale": 0.48731079704593777,
+  "note": "linear EXR value = srgb_to_linear(pixel) * linear_from_srgb_scale",
+  "brightest_region_uv": [
+    0.748046875,
+    0.66015625
+  ],
+  "galactic_center_radec_deg": [
+    266.405,
+    -28.936
+  ]
+}
