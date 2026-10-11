@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RocketSim</title>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <main id="panel">
+      <h1>RocketSim <span class="tag">M1 core check</span></h1>
+      <dl>
+        <dt>Core</dt><dd id="version">loading…</dd>
+        <dt>UTC</dt><dd id="utc">–</dd>
+        <dt>TDB</dt><dd id="tdb">–</dd>
+        <dt>Canary</dt><dd id="canary">–</dd>
+      </dl>
+      <details>
+        <summary>Bodies (<span id="body-count">0</span>)</summary>
+        <table id="bodies"><thead><tr><th>NAIF</th><th>Name</th><th>GM [m³/s²]</th><th>R<sub>eq</sub> [km]</th></tr></thead><tbody></tbody></table>
+      </details>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
