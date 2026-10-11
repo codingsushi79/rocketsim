@@ -1,0 +1,17 @@
+[package]
+name = "sim-cli"
+description = "Headless command-line driver for the physics core (tests, Monte Carlo, replay)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "simctl"
+path = "src/main.rs"
+
+[dependencies]
+sim-core.workspace = true
+
+[lints]
+workspace = true
