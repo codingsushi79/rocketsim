@@ -63,6 +63,7 @@ pub fn bodies_json() -> String {
 // Simulation handle for the browser: owns the ephemeris, clock and trajectory.
 // ---------------------------------------------------------------------------
 
+use serde_json::{Value, json};
 use sim_core::bodies::BodyId;
 use sim_core::earth;
 use sim_core::ephemeris::Ephemeris;
@@ -72,16 +73,15 @@ use sim_core::flight::{
 };
 use sim_core::frames::{IcrfBody, State};
 use sim_core::kepler::Elements;
+use sim_core::maneuver::{Leg, ManeuverNode, MissionPlan};
 use sim_core::math::Quat;
 use sim_core::math::V3;
 use sim_core::orientation;
+use sim_core::prediction::{self, HorizonPolicy, Marker, MarkerKind, PlannedBurn, Prediction};
 use sim_core::propagator::{
     Ballistic, ForceConfig, IntegratorConfig, Propagator, ScState, Trajectory, occultation,
 };
-use sim_core::maneuver::{Leg, ManeuverNode, MissionPlan};
-use sim_core::prediction::{self, HorizonPolicy, Marker, MarkerKind, PlannedBurn, Prediction};
 use sim_core::vehicle::VehicleConfig;
-use serde_json::{Value, json};
 
 /// Rebuild the coast prediction at most this often (s of sim time) while thrusting.
 const PREDICTION_REFRESH: f64 = 0.5;
@@ -595,7 +595,9 @@ impl Sim {
             self.plan_pred = None;
             return;
         }
-        let Some(s) = f.state_at(self.epoch) else { return };
+        let Some(s) = f.state_at(self.epoch) else {
+            return;
+        };
         let engine = f.engine_model().map(|(e, _)| e);
         match prediction::predict(&self.propagator(), &s, &nodes, engine, &self.policy) {
             Ok(p) => self.plan_pred = Some(p),
@@ -1042,20 +1044,26 @@ impl Sim {
     #[wasm_bindgen(js_name = planJson)]
     pub fn plan_json(&self) -> String {
         let nodes = &self.plan.legs[0].nodes;
-        let burns: Vec<&PlannedBurn> = self.plan_pred.as_ref().map_or(Vec::new(), |p| p.burns.iter().collect());
+        let burns: Vec<&PlannedBurn> = self
+            .plan_pred
+            .as_ref()
+            .map_or(Vec::new(), |p| p.burns.iter().collect());
         let total: f64 = nodes.iter().map(ManeuverNode::dv_magnitude).sum();
-        let (dv_left, usable) = self.flight.as_ref().and_then(|f| f.engine_model()).map_or((0.0, 0.0), |(e, usable)| {
-            let m_now = self.current_state().map_or(0.0, |s| s.mass);
-            let m_end = burns.last().map_or(m_now, |b| b.mass_after);
-            let left = usable - (m_now - m_end);
-            let ve = e.isp * sim_core::constants::G0;
-            let dv = if left > 0.0 && left < m_end {
-                ve * sim_core::math::fmath::ln(m_end / (m_end - left))
-            } else {
-                0.0
-            };
-            (dv, left)
-        });
+        let (dv_left, usable) = self.flight.as_ref().and_then(|f| f.engine_model()).map_or(
+            (0.0, 0.0),
+            |(e, usable)| {
+                let m_now = self.current_state().map_or(0.0, |s| s.mass);
+                let m_end = burns.last().map_or(m_now, |b| b.mass_after);
+                let left = usable - (m_now - m_end);
+                let ve = e.isp * sim_core::constants::G0;
+                let dv = if left > 0.0 && left < m_end {
+                    ve * sim_core::math::fmath::ln(m_end / (m_end - left))
+                } else {
+                    0.0
+                };
+                (dv, left)
+            },
+        );
         let list: Vec<Value> = nodes
             .iter()
             .map(|n| {
@@ -1242,10 +1250,9 @@ impl Sim {
             // Planned vs actual at cutoff, and the next apsides / closest approach.
             let planned = ex.plan.traj.state_at(cut);
             let actual = f.state_at(cut);
-            let pointing = ap
-                .delivered_vector
-                .normalized()
-                .map_or(0.0, |u| sim_core::math::fmath::acos(u.dot(ex.burn.direction).clamp(-1.0, 1.0)));
+            let pointing = ap.delivered_vector.normalized().map_or(0.0, |u| {
+                sim_core::math::fmath::acos(u.dot(ex.burn.direction).clamp(-1.0, 1.0))
+            });
             let target = f.target;
             let first = |traj: &Trajectory, kind: fn(&MarkerKind) -> bool| {
                 prediction::markers(&self.eph, &self.reg, traj, cut, target)
@@ -1255,9 +1262,14 @@ impl Sim {
             let mut cmp = Vec::new();
             if let Some(pred) = &self.pred {
                 for (label, kind) in [
-                    ("Periapsis", (|k: &MarkerKind| *k == MarkerKind::Periapsis) as fn(&MarkerKind) -> bool),
+                    (
+                        "Periapsis",
+                        (|k: &MarkerKind| *k == MarkerKind::Periapsis) as fn(&MarkerKind) -> bool,
+                    ),
                     ("Apoapsis", |k: &MarkerKind| *k == MarkerKind::Apoapsis),
-                    ("Closest approach", |k: &MarkerKind| *k == MarkerKind::ClosestApproach),
+                    ("Closest approach", |k: &MarkerKind| {
+                        *k == MarkerKind::ClosestApproach
+                    }),
                 ] {
                     if let (Some(p), Some(a)) = (first(&ex.plan.traj, kind), first(pred, kind)) {
                         cmp.push(json!({"label": label, "planned": p.value, "actual": a.value,
@@ -1284,7 +1296,11 @@ trait MinEpoch {
 
 impl MinEpoch for Epoch {
     fn min_by_epoch(self, o: Epoch) -> Epoch {
-        if self.seconds_since(o) <= 0.0 { self } else { o }
+        if self.seconds_since(o) <= 0.0 {
+            self
+        } else {
+            o
+        }
     }
 }
 
