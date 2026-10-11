@@ -1,0 +1,12 @@
+/target/
+web/node_modules/
+web/dist/
+web/src/wasm/
+.DS_Store
+# Secrets (Google Map Tiles API key etc.) live in env files that are never committed.
+.env
+.env.*
+!.env.example
+*.local
+.claude/*
+!.claude/launch.json
