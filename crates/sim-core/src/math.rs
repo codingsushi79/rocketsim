@@ -330,6 +330,51 @@ impl Quat {
     }
 }
 
+impl Quat {
+    /// Quaternion of a proper rotation matrix (`to_m3` inverse), by Shepperd's method
+    /// (J. Guidance and Control 1(3):223, 1978): pick the largest of 4w², 4x², 4y², 4z²
+    /// to divide by, for accuracy at any angle.
+    pub fn from_m3(m: &M3) -> Quat {
+        let [r0, r1, r2] = m.rows;
+        let (m00, m11, m22) = (r0.x, r1.y, r2.z);
+        let tr = m00 + m11 + m22;
+        let q = if tr >= m00 && tr >= m11 && tr >= m22 {
+            let s = (1.0 + tr).sqrt() * 2.0;
+            Quat::new(
+                0.25 * s,
+                (r2.y - r1.z) / s,
+                (r0.z - r2.x) / s,
+                (r1.x - r0.y) / s,
+            )
+        } else if m00 >= m11 && m00 >= m22 {
+            let s = (1.0 + m00 - m11 - m22).sqrt() * 2.0;
+            Quat::new(
+                (r2.y - r1.z) / s,
+                0.25 * s,
+                (r0.y + r1.x) / s,
+                (r0.z + r2.x) / s,
+            )
+        } else if m11 >= m22 {
+            let s = (1.0 + m11 - m00 - m22).sqrt() * 2.0;
+            Quat::new(
+                (r0.z - r2.x) / s,
+                (r0.y + r1.x) / s,
+                0.25 * s,
+                (r1.z + r2.y) / s,
+            )
+        } else {
+            let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0;
+            Quat::new(
+                (r1.x - r0.y) / s,
+                (r0.z + r2.x) / s,
+                (r1.z + r2.y) / s,
+                0.25 * s,
+            )
+        };
+        q.normalized().unwrap_or(Quat::IDENTITY)
+    }
+}
+
 impl Mul for Quat {
     type Output = Quat;
     /// Hamilton product. `(a * b).rotate(v) == a.rotate(b.rotate(v))`.
@@ -380,6 +425,22 @@ mod tests {
         let v = V3::new(0.3, -4.0, 2.2);
         assert!((a * b).rotate(v).max_abs_diff(a.rotate(b.rotate(v))) < 1e-14);
         assert!(a.conj().rotate(a.rotate(v)).max_abs_diff(v) < 1e-14);
+    }
+
+    #[test]
+    fn quaternion_from_matrix_round_trips_at_all_angles() {
+        for (axis, ang) in [
+            (V3::new(0.2, -0.9, 0.4), 2.1),
+            (V3::X, 3.1),
+            (V3::Y, -3.1),
+            (V3::Z, core::f64::consts::PI - 1e-5), // w ≈ 0 branch
+            (V3::new(1.0, 1.0, 1.0), 0.001),
+        ] {
+            let q = Quat::from_axis_angle(axis, ang).unwrap();
+            let r = Quat::from_m3(&q.to_m3());
+            let v = V3::new(5.0, 1.0, -3.0);
+            assert!(r.rotate(v).max_abs_diff(q.rotate(v)) < 1e-13);
+        }
     }
 
     #[test]

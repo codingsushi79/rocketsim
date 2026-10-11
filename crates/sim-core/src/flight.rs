@@ -172,6 +172,8 @@ pub struct Debris {
     pub state: ScState,
     pub attitude: Quat,
     pub omega_body: V3,
+    /// The stage's centre of mass in the vehicle body frame (for drawing the model).
+    pub com_body: V3,
     pub ballistic: Ballistic,
 }
 
@@ -1257,6 +1259,7 @@ impl Flight {
             },
             attitude: self.q,
             omega_body: omega,
+            com_body: mp_jet.com,
             ballistic: Ballistic {
                 cd: aero.cd,
                 drag_area: aero.drag_area,
@@ -1356,6 +1359,11 @@ impl Flight {
         }
     }
 
+    /// Drop trajectory history before `t` (bounds memory in long flights).
+    pub fn prune_before(&mut self, t: Epoch) {
+        self.traj.prune_before(t);
+    }
+
     /// Set the attitude directly (scenario setup), with zero body rate.
     pub fn set_attitude(&mut self, q: Quat) {
         self.q = q.normalized().unwrap_or(Quat::IDENTITY);
@@ -1429,6 +1437,20 @@ fn clamp_unit_box(v: V3) -> V3 {
         v.y.clamp(-1.0, 1.0),
         v.z.clamp(-1.0, 1.0),
     )
+}
+
+/// Orbit-aligned attitude: body +X along the velocity, +Z toward the centre body
+/// (nadir, made perpendicular to +X), +Y = Z × X (opposite the orbit normal).
+pub fn orbit_attitude(r: V3, v: V3) -> Quat {
+    let Some(x) = v.normalized() else {
+        return Quat::IDENTITY;
+    };
+    let Some(z) = (-r - x * (-r).dot(x)).normalized() else {
+        return Quat::IDENTITY;
+    };
+    let y = z.cross(x);
+    // Columns of the body → ICRF matrix are the body axes in ICRF.
+    Quat::from_m3(&crate::math::M3::from_rows(x, y, z).transpose())
 }
 
 /// Normalized linear interpolation of unit quaternions (shortest path).

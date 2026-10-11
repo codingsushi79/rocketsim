@@ -489,3 +489,13 @@ impl MinBy for Epoch {
         }
     }
 }
+
+#[test]
+fn orbit_attitude_points_prograde_with_nadir_down() {
+    let s = leo();
+    let q = sim_core::flight::orbit_attitude(s.state.r, s.state.v);
+    let v = s.state.v.normalized().unwrap();
+    let nadir = -s.state.r.normalized().unwrap();
+    assert!(q.rotate(V3::X).max_abs_diff(v) < 1e-14);
+    assert!(q.rotate(V3::Z).max_abs_diff(nadir) < 1e-14);
+}
