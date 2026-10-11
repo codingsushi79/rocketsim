@@ -4,6 +4,7 @@
 import { Sim } from "../wasm/sim_wasm.js";
 import type { SimSettings } from "../settings";
 import { RS1, type Telemetry, type VehicleSource } from "./vehicle";
+import type { AutopilotJson, PlanJson } from "../render/mapView";
 
 /** Warp levels, 1× to 10,000,000× (spec §2.2). */
 export const WARP_LEVELS = [1, 5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000] as const;
@@ -90,6 +91,9 @@ export class Simulation {
   /** True when warp was capped because the vehicle needs step-by-step physics. */
   warpCapped = false;
   private telemetryCache: { frame: number; t: Telemetry | null } = { frame: -1, t: null };
+  private planCache: { wall: number; plan: PlanJson | null; ap: AutopilotJson | null } = { wall: -1e9, plan: null, ap: null };
+  /** Target body (NAIF id) or −1. */
+  targetId = -1;
   private frame = 0;
 
   /** Load ephemeris for the decade of `epochUtc`, falling back to the CI subset. */
@@ -129,6 +133,7 @@ export class Simulation {
     }
     this.warpIndex = 0;
     this.paused = false;
+    this.targetId = -1;
   }
 
   get warp(): number {
@@ -161,6 +166,20 @@ export class Simulation {
     this.sim.stage();
   }
 
+  setTarget(id: number): void {
+    this.targetId = id;
+    this.sim.setTarget(id);
+  }
+
+  /** The maneuver plan and autopilot state, re-read at most 4× per second. */
+  planState(): { plan: PlanJson | null; ap: AutopilotJson | null } {
+    const now = performance.now();
+    if (this.hasVehicle && now - this.planCache.wall > 250) {
+      this.planCache = { wall: now, plan: JSON.parse(this.sim.planJson()) as PlanJson, ap: JSON.parse(this.sim.autopilotJson()) as AutopilotJson | null };
+    }
+    return this.planCache;
+  }
+
   /** Advance by `realDt` seconds of wall time × warp, within the frame budget. */
   tick(realDt: number): void {
     this.frame++;
@@ -184,6 +203,11 @@ export class Simulation {
       const dt = Math.min(chunk, want - done);
       this.sim.advance(dt);
       done += dt;
+      // The burn autopilot stopped on-rails warp before ignition: back to 1×.
+      if (this.hasVehicle && this.sim.takeWarpStop()) {
+        this.warpIndex = 0;
+        break;
+      }
       if (performance.now() - t0 > FRAME_BUDGET_MS && done < want) {
         this.warpLimited = true;
         break;

@@ -30,6 +30,9 @@ export const KEYBINDINGS: [string, string][] = [
   ["Caps Lock", "Fine control (25 %)"],
   ["V", "Speed reference: orbit / surface / target"],
   ["Y", "Cycle target body"],
+  ["M", "Map view (click the trajectory to add a maneuver node)"],
+  ["G", "Ground track (map view)"],
+  ["Delete", "Delete the selected maneuver node"],
 ];
 
 export class SettingsPanel {

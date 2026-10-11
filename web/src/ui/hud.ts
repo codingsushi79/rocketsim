@@ -64,6 +64,11 @@ export class Hud {
     );
   }
 
+  /** In map view the navball and vehicle panels give way to the map panels. */
+  setMap(on: boolean): void {
+    this.root.classList.toggle("map-mode", on);
+  }
+
   setBodyNames(names: Map<number, string>): void {
     this.bodyNames = names;
   }
@@ -116,6 +121,13 @@ export class Hud {
     );
   }
 
+  /** Burn direction of the next node (or the autopilot's), for the navball marker. */
+  private maneuverVector(): [number, number, number] | null {
+    const { plan } = this.sim.planState();
+    const d = plan?.nodes[0]?.direction;
+    return d ?? null;
+  }
+
   private updateFlight(): void {
     const def = this.def;
     const t = this.sim.telemetry();
@@ -153,7 +165,7 @@ export class Hud {
         normal: v3(3),
         radial: v3(6),
         target: tgt[0] === 0 && tgt[1] === 0 && tgt[2] === 0 ? null : tgt,
-        maneuver: null,
+        maneuver: this.maneuverVector(),
       });
       const nb = this.navball;
       E.navread!.textContent = `HDG ${nb.heading.toFixed(1).padStart(5)}°  PIT ${nb.pitch.toFixed(1).padStart(5)}°  ROL ${nb.roll.toFixed(1).padStart(6)}°`;
@@ -192,17 +204,21 @@ export class Hud {
       remaining > 1 ? `${this.stageProgress > 0 ? `${"■".repeat(Math.round(this.stageProgress * 8)).padEnd(8, "□")} ` : ""}Space: separate ${def.stages[next]!.name}` : "final stage";
 
     // Target and warnings.
-    const tgt = TARGET_CYCLE[this.targetIndex] ?? -1;
+    const tgt = this.sim.targetId;
     E.target!.textContent = tgt < 0 ? "none" : (this.bodyNames.get(tgt) ?? String(tgt));
     const warns: string[] = [];
     if (this.sim.warpCapped) warns.push(`Warp limited to ${PHYSICS_WARP_MAX}× while the vehicle is under control`);
     if (t.q > 500) warns.push(`Dynamic pressure ${(t.q / 1000).toFixed(1)} kPa`);
     if (t.heat > 5000) warns.push(`Heat flux ${(t.heat / 1000).toFixed(0)} kW/m²`);
     if (e?.flameout) warns.push("Engine flameout");
+    const { plan, ap } = this.sim.planState();
+    const nextNode = plan?.nodes[0];
+    if (ap && ap.phase === "aligning") warns.push(`Autopilot: ignition T−${fmtDuration(Math.max(0, ap.toStart))} · ${ap.dv.toFixed(1)} m/s`);
+    else if (ap && ap.phase === "burning") warns.push(`Autopilot burning ${ap.delivered.toFixed(1)} / ${ap.dv.toFixed(1)} m/s`);
+    else if (nextNode && nextNode.start !== null) warns.push(`Next node: burn T−${fmtDuration(Math.max(0, nextNode.start))} · ${nextNode.dv.toFixed(1)} m/s · ${nextNode.duration !== null && Number.isFinite(nextNode.duration) ? nextNode.duration.toFixed(0) : "—"} s`);
     E.warn!.textContent = warns.join(" · ");
   }
 
-  targetIndex = 0;
 
   show(on: boolean): void {
     this.root.classList.toggle("hidden", !on);

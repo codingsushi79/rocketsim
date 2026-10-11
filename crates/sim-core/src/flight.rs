@@ -1439,6 +1439,36 @@ impl Flight {
         Ok(Some(jet))
     }
 
+    /// The first attached main engine as a prediction model (vacuum, full throttle) and
+    /// its usable propellant (limited by the scarcer of fuel and oxidizer), kg.
+    pub fn engine_model(&self) -> Option<(crate::prediction::EngineModel, f64)> {
+        let cfg = self
+            .config
+            .engines
+            .iter()
+            .find(|e| self.stage_on(&e.stage))?;
+        let sum = |ids: &[String]| -> f64 {
+            ids.iter()
+                .filter_map(|id| self.config.tank_index(id))
+                .map(|i| self.tank[i])
+                .sum()
+        };
+        let mr = cfg.feed.mixture_ratio;
+        let fuel = sum(&cfg.feed.fuel_tanks);
+        let usable = if mr > 0.0 {
+            (fuel * (1.0 + mr)).min(sum(&cfg.feed.oxidizer_tanks) * (1.0 + mr) / mr)
+        } else {
+            fuel
+        };
+        Some((
+            crate::prediction::EngineModel {
+                thrust: cfg.thrust_vac,
+                isp: cfg.isp_vac,
+            },
+            usable,
+        ))
+    }
+
     /// Main-engine Δv and full-throttle burn time left (first attached engine).
     pub fn delta_v_remaining(&self) -> (f64, f64) {
         let Some((cfg, _)) = self

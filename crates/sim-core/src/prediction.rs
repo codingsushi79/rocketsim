@@ -72,6 +72,9 @@ pub struct PlannedBurn {
     pub duration: f64,
     pub mass_before: f64,
     pub mass_after: f64,
+    /// State at the node time (relative to `center`, before this burn).
+    pub position: V3,
+    pub velocity: V3,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +128,8 @@ pub fn predict(
             duration: 0.0,
             mass_before: s.mass,
             mass_after: s.mass,
+            position: s.state.r,
+            velocity: s.state.v,
         };
         match engine {
             Some(e) if dv > 0.0 && e.thrust > 0.0 && e.isp > 0.0 => {
@@ -456,7 +461,8 @@ fn scan(
 
 /// Points along `traj` in [from, to], relative to `center`, following the
 /// integrator's adaptive steps (dense where the path curves). Returns flat xyz and,
-/// per point, the index of the arc it belongs to. At most `max_points` (decimated).
+/// per point, the index of the arc it belongs to and its time since `from` (s). At most
+/// `max_points` (decimated).
 pub fn sample_path(
     eph: &Ephemeris,
     traj: &Trajectory,
@@ -464,7 +470,7 @@ pub fn sample_path(
     to: Epoch,
     center: BodyId,
     max_points: usize,
-) -> (Vec<f64>, Vec<u32>) {
+) -> (Vec<f64>, Vec<u32>, Vec<f64>) {
     let mut ts: Vec<(usize, f64)> = Vec::new();
     for (ai, arc) in traj.arcs.iter().enumerate() {
         let lo = from.seconds_since(arc.base).max(arc.t_start);
@@ -486,6 +492,7 @@ pub fn sample_path(
     let stride = ts.len().div_ceil(max_points.max(2));
     let mut xyz = Vec::new();
     let mut arcs = Vec::new();
+    let mut times = Vec::new();
     let n = ts.len();
     for (k, &(ai, t)) in ts.iter().enumerate() {
         if stride > 1 && k % stride != 0 && k + 1 != n {
@@ -502,8 +509,9 @@ pub fn sample_path(
         }
         xyz.extend([r.x, r.y, r.z]);
         arcs.push(ai as u32);
+        times.push(arc.base.add_seconds(t).seconds_since(from));
     }
-    (xyz, arcs)
+    (xyz, arcs, times)
 }
 
 fn body_orientation(body: BodyId, t: Epoch) -> Option<BodyOrientation> {

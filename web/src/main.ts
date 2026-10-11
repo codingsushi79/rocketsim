@@ -11,6 +11,7 @@ import { SettingsPanel } from "./ui/settingsPanel";
 import { Hud, TARGET_CYCLE } from "./ui/hud";
 import { FlightInput } from "./ui/input";
 import { VehicleView } from "./render/spacecraft";
+import { MapView } from "./render/mapView";
 import { h } from "./ui/dom";
 
 const params = new URLSearchParams(location.search);
@@ -226,8 +227,8 @@ async function main(): Promise<void> {
     {
       stage: () => sim.stage(),
       cycleTarget: () => {
-        hud.targetIndex = (hud.targetIndex + 1) % TARGET_CYCLE.length;
-        sim.sim.setTarget(TARGET_CYCLE[hud.targetIndex]!);
+        const i = TARGET_CYCLE.indexOf(sim.targetId);
+        sim.setTarget(TARGET_CYCLE[(i + 1) % TARGET_CYCLE.length]!);
       },
     },
   );
@@ -244,7 +245,7 @@ async function main(): Promise<void> {
         sim.start(s, store.get().sim);
         await useVehicle(s);
         hud.setVehicle(s.vehicle?.def ?? null);
-        hud.targetIndex = 0;
+        mapView.setActive(false);
         engine.resetAdaptation();
         world.focus = -1;
         world.camera.minDistance = 1.5;
@@ -268,13 +269,15 @@ async function main(): Promise<void> {
       toMainMenu() {
         inGame = false;
         input.enabled = false;
+        mapView.setActive(false);
         hud.show(false);
         menus.main();
       },
     },
     core.version,
   );
-  ui.append(menus.root, hud.root);
+  const mapView = new MapView(engine, world, sim, bodies);
+  ui.append(mapView.overlay, mapView.panel, mapView.track, menus.root, hud.root);
   store.subscribe((s) => {
     engine.applySettings(s.graphics);
     world.applySettings(s, assets);
@@ -305,6 +308,9 @@ async function main(): Promise<void> {
       case "]": world.cycleFocus(1); break;
       case "[": world.cycleFocus(-1); break;
       case "o": case "O": store.update((s) => (s.ui.showOrbit = !s.ui.showOrbit)); break;
+      case "m": case "M": if (sim.hasVehicle) mapView.setActive(!mapView.active), hud.setMap(mapView.active); break;
+      case "g": case "G": mapView.toggleTrack(); break;
+      case "Delete": case "Backspace": if (mapView.active) mapView.deleteSelected(); break;
       case "F3": hud.debug = !hud.debug; e.preventDefault(); break;
     }
   });
@@ -323,6 +329,8 @@ async function main(): Promise<void> {
     if (inGame || testScene) sim.tick(dt);
     else world.camera.spin(dt * 0.02);
     world.update(dt);
+    mapView.keysFine = sim.controls.fine;
+    mapView.update(dt);
     engine.render(dt, world.atmo);
     hud.update(dt, world.focusName(), centerNames.get(world.centerId) ?? "?", { showFps: store.get().ui.showFps, depth: engine.depth });
   };

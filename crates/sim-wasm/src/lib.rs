@@ -66,7 +66,10 @@ pub fn bodies_json() -> String {
 use sim_core::bodies::BodyId;
 use sim_core::earth;
 use sim_core::ephemeris::Ephemeris;
-use sim_core::flight::{self, Controls, Debris, Flight, FlightStatus, SasMode, SpeedReference};
+use sim_core::flight::{
+    self, AutopilotPhase, BurnAutopilot, Controls, Debris, Flight, FlightStatus, SasMode,
+    SpeedReference,
+};
 use sim_core::frames::{IcrfBody, State};
 use sim_core::kepler::Elements;
 use sim_core::math::Quat;
@@ -75,7 +78,10 @@ use sim_core::orientation;
 use sim_core::propagator::{
     Ballistic, ForceConfig, IntegratorConfig, Propagator, ScState, Trajectory, occultation,
 };
+use sim_core::maneuver::{Leg, ManeuverNode, MissionPlan};
+use sim_core::prediction::{self, HorizonPolicy, Marker, MarkerKind, PlannedBurn, Prediction};
 use sim_core::vehicle::VehicleConfig;
+use serde_json::{Value, json};
 
 /// Rebuild the coast prediction at most this often (s of sim time) while thrusting.
 const PREDICTION_REFRESH: f64 = 0.5;
@@ -103,6 +109,15 @@ pub struct Sim {
     /// Coast prediction from the flight's state at `pred_start`.
     pred: Option<Trajectory>,
     pred_start: Epoch,
+    /// Coast-prediction length after the last rebuild (horizon policy), s.
+    pred_span: f64,
+    policy: HorizonPolicy,
+    plan: MissionPlan,
+    plan_pred: Option<Prediction>,
+    plan_dirty: bool,
+    /// The burn being executed by the autopilot and the plan it came from.
+    execution: Option<Execution>,
+    warp_stopped: bool,
     debris: Vec<(Debris, Trajectory)>,
 }
 
@@ -130,6 +145,15 @@ impl Sim {
             rails_allowed: false,
             pred: None,
             pred_start: Epoch::J2000,
+            pred_span: 6_000.0,
+            policy: HorizonPolicy::default(),
+            plan: MissionPlan {
+                legs: vec![Leg::default()],
+            },
+            plan_pred: None,
+            plan_dirty: false,
+            execution: None,
+            warp_stopped: false,
             debris: Vec::new(),
         }
     }
@@ -482,6 +506,11 @@ impl Sim {
             let p = self.propagator();
             f.advance(&p, target, &self.controls, physics, lookahead)
         };
+        if f.warp_stop {
+            f.warp_stop = false;
+            self.warp_stopped = true;
+        }
+        let stopped_early = self.warp_stopped && f.epoch().seconds_since(target) < 0.0;
         match res {
             Ok(debris) => {
                 for d in debris {
@@ -494,12 +523,24 @@ impl Sim {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
-        self.epoch = if f.status() == FlightStatus::Flying {
+        self.epoch = if f.status() == FlightStatus::Flying && !stopped_early {
             target
         } else {
             f.epoch()
         };
         f.prune_before(self.epoch.add_seconds(-60.0));
+        // A finished burn: drop its node from the plan (the report stays).
+        if let (Some(ex), Some(ap)) = (&mut self.execution, f.autopilot())
+            && ap.phase == AutopilotPhase::Done
+            && ex.done.is_none()
+        {
+            ex.done = Some(*ap);
+            let t = ex.burn.node.epoch_tdb;
+            for leg in &mut self.plan.legs {
+                leg.nodes.retain(|n| n.epoch_tdb != t);
+            }
+            self.plan_dirty = true;
+        }
         self.flight = Some(f);
         self.update_prediction();
         self.update_debris();
@@ -517,13 +558,18 @@ impl Sim {
             }
             (Some(_), None) => false,
         };
-        let horizon = self.epoch.add_seconds(self.lookahead);
+        let horizon = self.epoch.add_seconds(self.pred_span);
         let res = if stale {
             let Some(s) = f.state_at(self.epoch) else {
                 return;
             };
             self.pred_start = self.epoch;
-            self.propagator().propagate(&s, horizon, &[]).map(Some)
+            self.plan_dirty = true;
+            let r = prediction::predict(&self.propagator(), &s, &[], None, &self.policy);
+            if let Ok(pr) = &r {
+                self.pred_span = pr.horizon.seconds_since(self.epoch);
+            }
+            r.map(|pr| Some(pr.traj))
         } else if let Some(mut t) = self.pred.take() {
             let r = self.propagator().extend(&mut t, horizon, &[]);
             t.prune_before(self.epoch.add_seconds(-60.0));
@@ -533,6 +579,26 @@ impl Sim {
         };
         match res {
             Ok(t) => self.pred = t,
+            Err(e) => self.error = Some(e.to_string()),
+        }
+        if self.plan_dirty {
+            self.rebuild_plan();
+        }
+    }
+
+    /// Re-predict the plan from the current state (nodes as finite burns).
+    fn rebuild_plan(&mut self) {
+        self.plan_dirty = false;
+        let nodes: Vec<ManeuverNode> = self.plan.nodes().into_iter().map(|(_, _, n)| n).collect();
+        let Some(f) = &self.flight else { return };
+        if nodes.is_empty() {
+            self.plan_pred = None;
+            return;
+        }
+        let Some(s) = f.state_at(self.epoch) else { return };
+        let engine = f.engine_model().map(|(e, _)| e);
+        match prediction::predict(&self.propagator(), &s, &nodes, engine, &self.policy) {
+            Ok(p) => self.plan_pred = Some(p),
             Err(e) => self.error = Some(e.to_string()),
         }
     }
@@ -884,6 +950,341 @@ impl Sim {
         .iter()
         .map(|&r| self.reference_velocity_with(&s, r).norm())
         .collect()
+    }
+}
+
+/// A burn handed to the autopilot, kept for the planned-vs-actual report.
+struct Execution {
+    burn: PlannedBurn,
+    plan: Prediction,
+    done: Option<BurnAutopilot>,
+}
+
+fn marker_json(m: &Marker, now: Epoch) -> Value {
+    let (kind, extra) = match m.kind {
+        MarkerKind::Periapsis => ("pe", Value::Null),
+        MarkerKind::Apoapsis => ("ap", Value::Null),
+        MarkerKind::SoiChange { from, to } => ("soi", json!({"from": from.0, "to": to.0})),
+        MarkerKind::Impact => ("impact", Value::Null),
+        MarkerKind::ClosestApproach => ("ca", Value::Null),
+        MarkerKind::AscendingNode => ("an", Value::Null),
+        MarkerKind::DescendingNode => ("dn", Value::Null),
+    };
+    json!({
+        "kind": kind,
+        "t": m.epoch.tdb_seconds(),
+        "dt": m.epoch.seconds_since(now),
+        "center": m.center.0,
+        "pos": [m.position.x, m.position.y, m.position.z],
+        "value": m.value,
+        "extra": extra,
+    })
+}
+
+#[wasm_bindgen]
+impl Sim {
+    /// Prediction length limits: `orbits` past the last burn for bound orbits, and a
+    /// hard cap in days otherwise.
+    #[wasm_bindgen(js_name = setPredictionPolicy)]
+    pub fn set_prediction_policy(&mut self, orbits: f64, cap_days: f64) {
+        self.policy.orbits = orbits.clamp(0.2, 20.0);
+        self.policy.cap = cap_days.clamp(0.1, 3650.0) * 86_400.0;
+        self.pred = None;
+        self.plan_dirty = true;
+        self.update_prediction();
+    }
+
+    /// Add a maneuver node at TDB seconds `t` with Δv (prograde, normal, radial), m/s.
+    /// Returns its index in time order.
+    #[wasm_bindgen(js_name = addNode)]
+    pub fn add_node(&mut self, t: f64, prograde: f64, normal: f64, radial: f64) -> u32 {
+        let n = ManeuverNode {
+            epoch_tdb: t,
+            prograde,
+            normal,
+            radial,
+        };
+        self.plan.legs[0].nodes.push(n);
+        self.plan.legs[0]
+            .nodes
+            .sort_by(|a, b| a.epoch_tdb.total_cmp(&b.epoch_tdb));
+        self.plan_dirty = true;
+        self.rebuild_plan();
+        self.plan.legs[0]
+            .nodes
+            .iter()
+            .position(|x| *x == n)
+            .unwrap_or(0) as u32
+    }
+
+    /// Replace node `i` (time order); returns its new index.
+    #[wasm_bindgen(js_name = setNode)]
+    pub fn set_node(&mut self, i: u32, t: f64, prograde: f64, normal: f64, radial: f64) -> u32 {
+        let nodes = &mut self.plan.legs[0].nodes;
+        if (i as usize) >= nodes.len() {
+            return i;
+        }
+        nodes.remove(i as usize);
+        self.add_node(t, prograde, normal, radial)
+    }
+
+    #[wasm_bindgen(js_name = removeNode)]
+    pub fn remove_node(&mut self, i: u32) {
+        let nodes = &mut self.plan.legs[0].nodes;
+        if (i as usize) < nodes.len() {
+            nodes.remove(i as usize);
+            self.plan_dirty = true;
+            self.rebuild_plan();
+        }
+    }
+
+    /// The plan as JSON: nodes with their computed burns, total Δv, Δv left after.
+    #[wasm_bindgen(js_name = planJson)]
+    pub fn plan_json(&self) -> String {
+        let nodes = &self.plan.legs[0].nodes;
+        let burns: Vec<&PlannedBurn> = self.plan_pred.as_ref().map_or(Vec::new(), |p| p.burns.iter().collect());
+        let total: f64 = nodes.iter().map(ManeuverNode::dv_magnitude).sum();
+        let (dv_left, usable) = self.flight.as_ref().and_then(|f| f.engine_model()).map_or((0.0, 0.0), |(e, usable)| {
+            let m_now = self.current_state().map_or(0.0, |s| s.mass);
+            let m_end = burns.last().map_or(m_now, |b| b.mass_after);
+            let left = usable - (m_now - m_end);
+            let ve = e.isp * sim_core::constants::G0;
+            let dv = if left > 0.0 && left < m_end {
+                ve * sim_core::math::fmath::ln(m_end / (m_end - left))
+            } else {
+                0.0
+            };
+            (dv, left)
+        });
+        let list: Vec<Value> = nodes
+            .iter()
+            .map(|n| {
+                let b = burns.iter().find(|b| b.node == *n);
+                json!({
+                    "t": n.epoch_tdb,
+                    "dt": n.epoch().seconds_since(self.epoch),
+                    "prograde": n.prograde, "normal": n.normal, "radial": n.radial,
+                    "dv": n.dv_magnitude(),
+                    "start": b.map(|b| b.start.seconds_since(self.epoch)),
+                    "duration": b.map(|b| b.duration),
+                    "massAfter": b.map(|b| b.mass_after),
+                    "center": b.map(|b| b.center.0),
+                    "direction": b.map(|b| [b.direction.x, b.direction.y, b.direction.z]),
+                    "pos": b.map(|b| [b.position.x, b.position.y, b.position.z]),
+                    "vel": b.map(|b| [b.velocity.x, b.velocity.y, b.velocity.z]),
+                })
+            })
+            .collect();
+        json!({"nodes": list, "totalDv": total, "dvAfter": dv_left, "propellantAfter": usable,
+               "insufficient": usable < 0.0})
+        .to_string()
+    }
+
+    /// Markers on the coast (`planned` false) or planned trajectory, as JSON.
+    #[wasm_bindgen(js_name = markersJson)]
+    pub fn markers_json(&self, planned: bool) -> String {
+        let traj = if planned {
+            self.plan_pred.as_ref().map(|p| &p.traj)
+        } else {
+            self.pred.as_ref()
+        };
+        let Some(traj) = traj else {
+            return "[]".into();
+        };
+        let target = self.flight.as_ref().and_then(|f| f.target);
+        let ms = prediction::markers(&self.eph, &self.reg, traj, self.epoch, target);
+        Value::Array(ms.iter().map(|m| marker_json(m, self.epoch)).collect()).to_string()
+    }
+
+    /// Sampled path of the coast or planned prediction relative to body `center`:
+    /// [x, y, z, arc, t] per point (arc = index of the SOI patch, t = seconds from now),
+    /// up to `max_points`.
+    pub fn path(&self, planned: bool, center: i32, max_points: u32) -> Vec<f64> {
+        let traj = if planned {
+            self.plan_pred.as_ref().map(|p| &p.traj)
+        } else {
+            self.pred.as_ref()
+        };
+        let Some(traj) = traj else {
+            return Vec::new();
+        };
+        let (xyz, arcs, times) = prediction::sample_path(
+            &self.eph,
+            traj,
+            self.epoch,
+            traj.end_epoch(),
+            BodyId(center),
+            max_points as usize,
+        );
+        let mut out = Vec::with_capacity(arcs.len() * 5);
+        for (k, a) in arcs.iter().enumerate() {
+            out.extend([
+                xyz[3 * k],
+                xyz[3 * k + 1],
+                xyz[3 * k + 2],
+                f64::from(*a),
+                times[k],
+            ]);
+        }
+        out
+    }
+
+    /// Centre body of each arc of the coast or planned prediction.
+    #[wasm_bindgen(js_name = pathCenters)]
+    pub fn path_centers(&self, planned: bool) -> Vec<i32> {
+        let traj = if planned {
+            self.plan_pred.as_ref().map(|p| &p.traj)
+        } else {
+            self.pred.as_ref()
+        };
+        traj.map_or(Vec::new(), |t| t.arcs.iter().map(|a| a.center.0).collect())
+    }
+
+    /// Osculating orbit of `body` about its parent: n points, relative to the parent.
+    #[wasm_bindgen(js_name = bodyOrbit)]
+    pub fn body_orbit(&self, body: i32, n: u32) -> Vec<f64> {
+        prediction::body_orbit(&self.eph, &self.reg, BodyId(body), self.epoch, n as usize)
+    }
+
+    /// Laplace sphere-of-influence radius of `body` now, m (infinite for the Sun).
+    #[wasm_bindgen(js_name = soiRadius)]
+    pub fn soi_radius(&self, body: i32) -> f64 {
+        self.propagator()
+            .soi_radius(BodyId(body), self.epoch)
+            .unwrap_or(f64::NAN)
+    }
+
+    /// Ground track over `body` along the planned (if any) or coast prediction:
+    /// [lat, lon] in radians, `n` samples over `span` seconds from now.
+    #[wasm_bindgen(js_name = groundTrack)]
+    pub fn ground_track(&self, body: i32, n: u32, span: f64) -> Vec<f64> {
+        let traj = self
+            .plan_pred
+            .as_ref()
+            .map(|p| &p.traj)
+            .or(self.pred.as_ref());
+        let Some(traj) = traj else {
+            return Vec::new();
+        };
+        let to = self.epoch.add_seconds(span).min_by_epoch(traj.end_epoch());
+        prediction::ground_track(&self.eph, traj, self.epoch, to, BodyId(body), n as usize)
+    }
+
+    /// Hand node `i` (time order) to the burn autopilot.
+    #[wasm_bindgen(js_name = executeNode)]
+    pub fn execute_node(&mut self, i: u32) -> Result<(), JsError> {
+        let n = *self.plan.legs[0]
+            .nodes
+            .get(i as usize)
+            .ok_or_else(|| JsError::new("no such node"))?;
+        let plan = self
+            .plan_pred
+            .clone()
+            .ok_or_else(|| JsError::new("no plan"))?;
+        let burn = *plan
+            .burns
+            .iter()
+            .find(|b| b.node == n)
+            .ok_or_else(|| JsError::new("node not in the prediction"))?;
+        if !burn.duration.is_finite() {
+            return Err(JsError::new("no engine to execute this node"));
+        }
+        let f = self
+            .flight
+            .as_mut()
+            .ok_or_else(|| JsError::new("no flight"))?;
+        f.arm_autopilot(burn.start, burn.direction, burn.dv_vector.norm());
+        self.execution = Some(Execution {
+            burn,
+            plan,
+            done: None,
+        });
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = cancelAutopilot)]
+    pub fn cancel_autopilot(&mut self) {
+        if let Some(f) = &mut self.flight {
+            f.cancel_autopilot();
+        }
+        self.execution = None;
+    }
+
+    /// True once after on-rails warp stopped for an armed burn.
+    #[wasm_bindgen(js_name = takeWarpStop)]
+    pub fn take_warp_stop(&mut self) -> bool {
+        core::mem::take(&mut self.warp_stopped)
+    }
+
+    /// Autopilot state and, after the burn, the planned-vs-actual report (JSON).
+    #[wasm_bindgen(js_name = autopilotJson)]
+    pub fn autopilot_json(&self) -> String {
+        let (Some(ex), Some(f)) = (&self.execution, &self.flight) else {
+            return "null".into();
+        };
+        let ap = ex.done.or_else(|| f.autopilot().copied());
+        let Some(ap) = ap else {
+            return "null".into();
+        };
+        let phase = match ap.phase {
+            AutopilotPhase::Aligning => "aligning",
+            AutopilotPhase::Burning => "burning",
+            AutopilotPhase::Done => "done",
+        };
+        let mut v = json!({
+            "phase": phase,
+            "toStart": ap.start.seconds_since(self.epoch),
+            "dv": ap.dv,
+            "delivered": ap.delivered,
+            "duration": ex.burn.duration,
+        });
+        if let Some(cut) = ap.cutoff {
+            // Planned vs actual at cutoff, and the next apsides / closest approach.
+            let planned = ex.plan.traj.state_at(cut);
+            let actual = f.state_at(cut);
+            let pointing = ap
+                .delivered_vector
+                .normalized()
+                .map_or(0.0, |u| sim_core::math::fmath::acos(u.dot(ex.burn.direction).clamp(-1.0, 1.0)));
+            let target = f.target;
+            let first = |traj: &Trajectory, kind: fn(&MarkerKind) -> bool| {
+                prediction::markers(&self.eph, &self.reg, traj, cut, target)
+                    .into_iter()
+                    .find(|m| kind(&m.kind))
+            };
+            let mut cmp = Vec::new();
+            if let Some(pred) = &self.pred {
+                for (label, kind) in [
+                    ("Periapsis", (|k: &MarkerKind| *k == MarkerKind::Periapsis) as fn(&MarkerKind) -> bool),
+                    ("Apoapsis", |k: &MarkerKind| *k == MarkerKind::Apoapsis),
+                    ("Closest approach", |k: &MarkerKind| *k == MarkerKind::ClosestApproach),
+                ] {
+                    if let (Some(p), Some(a)) = (first(&ex.plan.traj, kind), first(pred, kind)) {
+                        cmp.push(json!({"label": label, "planned": p.value, "actual": a.value,
+                                        "dtPlanned": p.epoch.seconds_since(cut), "dtActual": a.epoch.seconds_since(cut)}));
+                    }
+                }
+            }
+            v["report"] = json!({
+                "dvPlanned": ex.burn.dv_vector.norm(),
+                "dvDelivered": ap.delivered_vector.norm(),
+                "pointingDeg": pointing.to_degrees(),
+                "posErr": match (planned, actual) { (Some(p), Some(a)) => (p.state.r - a.state.r).norm(), _ => f64::NAN },
+                "velErr": match (planned, actual) { (Some(p), Some(a)) => (p.state.v - a.state.v).norm(), _ => f64::NAN },
+                "compare": cmp,
+            });
+        }
+        v.to_string()
+    }
+}
+
+trait MinEpoch {
+    fn min_by_epoch(self, o: Epoch) -> Epoch;
+}
+
+impl MinEpoch for Epoch {
+    fn min_by_epoch(self, o: Epoch) -> Epoch {
+        if self.seconds_since(o) <= 0.0 { self } else { o }
     }
 }
 

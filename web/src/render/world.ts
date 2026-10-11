@@ -58,6 +58,11 @@ export class World {
   private settings: Settings;
   /** Center body of the spacecraft state (for the HUD). */
   centerId = EARTH;
+  /** Map view: camera frame aligned with the ecliptic, no flight overlays. */
+  mapMode = false;
+  /** Last frame's camera position, body positions and spacecraft position, all f64 in
+   *  the spacecraft-center frame (ICRF axes), for overlays such as the map view. */
+  frame = { cam: [0, 0, 0] as V, rel: new Map<number, V>(), rsc: [0, 0, 0] as V };
 
   constructor(
     private engine: Engine,
@@ -163,12 +168,19 @@ export class World {
     let up = vec(focusPos);
     if (up.lengthSq() < 1) up = new THREE.Vector3(0, 0, 1);
     up.normalize();
-    const fwdRef = this.focus === FOCUS_SPACECRAFT ? vec(vsc) : new THREE.Vector3(0, 0, 1).cross(up);
+    let fwdRef = this.focus === FOCUS_SPACECRAFT ? vec(vsc) : new THREE.Vector3(0, 0, 1).cross(up);
+    if (this.mapMode) {
+      // Map: "up" is the ecliptic pole (obliquity 84381.406″, IAU 2006), so orbits lie flat.
+      const eps = (84381.406 / 3600) * (Math.PI / 180);
+      up = new THREE.Vector3(0, -Math.sin(eps), Math.cos(eps));
+      fwdRef = new THREE.Vector3(1, 0, 0);
+    }
     if (fwdRef.lengthSq() < 1e-12) fwdRef.set(1, 0, 0);
     fwdRef.normalize();
     this.camera.update(dt);
     const { offset } = this.camera.offset(up, fwdRef);
     const cam = add(focusPos, offset);
+    this.frame = { cam, rel, rsc };
 
     // Bodies.
     let nPoints = 0;
@@ -262,7 +274,7 @@ export class World {
     }
 
     // Predicted orbit (one period, or the lookahead).
-    this.orbitLine.visible = this.settings.ui.showOrbit;
+    this.orbitLine.visible = this.settings.ui.showOrbit && !this.mapMode;
     if (this.orbitLine.visible) {
       const info = s.orbitInfo();
       const period = Number.isFinite(info[8]) ? info[8]! : 6000;
@@ -283,7 +295,8 @@ export class World {
     c.position.set(0, 0, 0);
     c.up.copy(up);
     c.lookAt(focusPos[0] - cam[0], focusPos[1] - cam[1], focusPos[2] - cam[2]);
-    c.near = 0.05;
+    // Map distances: keep the near plane proportional (depth precision is ample either way).
+    c.near = this.mapMode ? Math.max(0.05, this.camera.distance * 1e-4) : 0.05;
     c.updateProjectionMatrix();
     c.updateMatrixWorld();
 
