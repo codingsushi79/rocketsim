@@ -91,10 +91,11 @@ export class Engine {
 
     this.lumQuad = new FullScreenQuad(
       new THREE.ShaderMaterial({
-        uniforms: { src: { value: null } },
+        uniforms: { src: { value: null }, preExposure: PRE_EXPOSURE },
         vertexShader: QUAD_VS,
         fragmentShader: /* glsl */ `
           uniform sampler2D src;
+          uniform float preExposure;
           varying vec2 vUv;
           void main() {
             vec3 c = texture2D(src, vUv).rgb;
@@ -103,7 +104,13 @@ export class Engine {
             // so a bright object against black space is exposed for the object.
             // Clamp single-pixel extremes (the solar disk) so they don't dominate.
             l = min(l, 64.0);
-            float w = l > 1e-6 ? 1.0 : 0.0;
+            // "Lit" means above 1e-6 U in absolute radiance (40× the brightest Milky
+            // Way, MILKY_WAY_WHITE_U ≈ 2.7e-8 U), so the sky never counts however far
+            // the pre-exposure has opened up.
+            // Centre-weighted (as camera metering): the focus object is at the centre.
+            vec2 d = vUv - 0.5;
+            float cw = 1.0 + 4.0 * exp(-dot(d, d) / 0.02);
+            float w = l / preExposure > 1e-6 ? cw : 0.0;
             gl_FragColor = vec4(l * w, w, l, 1.0);
           }`,
       }),
