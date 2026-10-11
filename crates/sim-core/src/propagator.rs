@@ -654,6 +654,10 @@ impl<'a> Propagator<'a> {
 
     /// Laplace sphere-of-influence radius r = d·(m/M)^(2/5) at `t`, where d is the
     /// current distance to the parent.
+    pub fn soi_radius(&self, b: BodyId, t: Epoch) -> Result<f64, EphemerisError> {
+        self.soi(b, t)
+    }
+
     fn soi(&self, b: BodyId, t: Epoch) -> Result<f64, EphemerisError> {
         let Some(p) = self.parent(b) else {
             return Ok(f64::INFINITY);
@@ -957,7 +961,9 @@ impl<'a> Propagator<'a> {
             let mut hits_burn = false;
             for b in burns {
                 for e in [b.start, b.end] {
-                    if e.seconds_since(now) > 0.0 && e.seconds_since(boundary) < 0.0 {
+                    if e.seconds_since(now) > 0.0 && e.seconds_since(boundary) <= 0.0 {
+                        // `<=`: a requested end exactly on a burn boundary must be hit
+                        // exactly too, or the next extension would skip into the burn.
                         boundary = e;
                         hits_burn = true;
                     }

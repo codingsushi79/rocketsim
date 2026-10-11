@@ -177,6 +177,36 @@ pub struct Debris {
     pub ballistic: Ballistic,
 }
 
+/// Autopilot lead time: on-rails warp stops this long before ignition so the
+/// vehicle can settle on the burn attitude under physics, s.
+pub const AUTOPILOT_ALIGN_LEAD: f64 = 30.0;
+/// The autopilot throttles down when less than this much burn time (at full thrust)
+/// remains, s, to cut off precisely.
+const AUTOPILOT_TAPER: f64 = 2.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutopilotPhase {
+    /// Pointing at the node vector, waiting for the start time.
+    Aligning,
+    Burning,
+    Done,
+}
+
+/// Executes one planned burn: SAS on the (inertially fixed) node vector, ignition at
+/// `start`, cutoff when the Δv delivered along `direction` reaches `dv`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BurnAutopilot {
+    pub start: Epoch,
+    pub direction: V3,
+    pub dv: f64,
+    /// Δv delivered along `direction` so far, and the full delivered vector (ICRF), m/s.
+    pub delivered: f64,
+    pub delivered_vector: V3,
+    pub phase: AutopilotPhase,
+    pub ignition: Option<Epoch>,
+    pub cutoff: Option<Epoch>,
+}
+
 /// What the HUD shows. All SI.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Telemetry {
@@ -233,6 +263,9 @@ pub struct Flight {
     last_q_dyn: f64,
     last_heat: f64,
     last_p_amb: f64,
+    autopilot: Option<BurnAutopilot>,
+    /// Set when on-rails warp stopped early for the autopilot (cleared by the caller).
+    pub warp_stop: bool,
 }
 
 /// Environment at the tick start.
@@ -319,6 +352,8 @@ impl Flight {
             last_q_dyn: 0.0,
             last_heat: 0.0,
             last_p_amb: 0.0,
+            autopilot: None,
+            warp_stop: false,
             config,
         };
         let s = ScState {
@@ -353,11 +388,85 @@ impl Flight {
 
     /// True if the vehicle must be simulated tick by tick (no on-rails warp).
     pub fn needs_physics(&self, c: &Controls) -> bool {
+        let ap = self.autopilot.is_some_and(|a| match a.phase {
+            AutopilotPhase::Burning => true,
+            AutopilotPhase::Aligning => a.start.seconds_since(self.t_state) <= AUTOPILOT_ALIGN_LEAD,
+            AutopilotPhase::Done => false,
+        });
         self.status == FlightStatus::Flying
             && (c.active()
+                || ap
                 || self.pending_stage
                 || self.desat
                 || self.engines.iter().any(|e| e.running))
+    }
+
+    /// Arm the burn autopilot (replacing any previous one).
+    pub fn arm_autopilot(&mut self, start: Epoch, direction: V3, dv: f64) {
+        let direction = direction.normalized().unwrap_or(V3::X);
+        self.maneuver = Some(direction);
+        self.autopilot = Some(BurnAutopilot {
+            start,
+            direction,
+            dv: dv.max(0.0),
+            delivered: 0.0,
+            delivered_vector: V3::ZERO,
+            phase: AutopilotPhase::Aligning,
+            ignition: None,
+            cutoff: None,
+        });
+    }
+
+    pub fn cancel_autopilot(&mut self) {
+        self.autopilot = None;
+    }
+
+    pub fn autopilot(&self) -> Option<&BurnAutopilot> {
+        self.autopilot.as_ref()
+    }
+
+    /// The pilot's controls with the autopilot's overrides for this tick.
+    fn autopilot_controls(&mut self, c: &Controls, t0: Epoch, mass: f64, p_amb: f64) -> Controls {
+        let Some(ap) = self.autopilot.as_mut() else {
+            return *c;
+        };
+        if ap.phase == AutopilotPhase::Done {
+            return *c;
+        }
+        let mut out = Controls {
+            rotation: V3::ZERO,
+            sas: SasMode::Maneuver,
+            throttle: 0.0,
+            ..*c
+        };
+        self.maneuver = Some(ap.direction);
+        if ap.phase == AutopilotPhase::Aligning && t0.seconds_since(ap.start) >= 0.0 {
+            ap.phase = AutopilotPhase::Burning;
+            ap.ignition = Some(t0);
+        }
+        if ap.phase == AutopilotPhase::Burning {
+            let remaining = ap.dv - ap.delivered;
+            let engine = self
+                .config
+                .engines
+                .iter()
+                .zip(&self.engines)
+                .find(|(e, _)| {
+                    self.config
+                        .stage_index(&e.stage)
+                        .is_some_and(|i| self.attached[i])
+                });
+            let a_full = engine.map_or(0.0, |(e, _)| engine_thrust(e, 1.0, p_amb).0 / mass);
+            let thr_min = engine.map_or(1.0, |(e, _)| e.throttle_min);
+            // Stop when this tick at the lowest throttle would overshoot by more than half.
+            if remaining <= 0.5 * a_full * thr_min * CONTROL_DT || a_full <= 0.0 {
+                ap.phase = AutopilotPhase::Done;
+                ap.cutoff = Some(t0);
+            } else {
+                out.throttle = (remaining / (a_full * AUTOPILOT_TAPER)).clamp(thr_min, 1.0);
+            }
+        }
+        out
     }
 
     pub fn mass_props(&self) -> MassProperties {
@@ -468,7 +577,24 @@ impl Flight {
             return Ok(debris);
         }
         if !physics {
-            self.advance_on_rails(prop, until, controls, lookahead)?;
+            // Stop warping before an armed burn so attitude can settle under physics.
+            let mut until = until;
+            if let Some(ap) = self.autopilot
+                && ap.phase == AutopilotPhase::Aligning
+            {
+                let stop = ap.start.add_seconds(-AUTOPILOT_ALIGN_LEAD);
+                if until.seconds_since(stop) > 0.0 {
+                    until = if stop.seconds_since(self.t_state) > 0.0 {
+                        stop
+                    } else {
+                        self.t_state
+                    };
+                    self.warp_stop = true;
+                }
+            }
+            if until.seconds_since(self.t_state) > 1e-9 {
+                self.advance_on_rails(prop, until, controls, lookahead)?;
+            }
             return Ok(debris);
         }
         if !self.on_grid {
@@ -526,6 +652,20 @@ impl Flight {
         self.t_state = until;
         self.on_grid = false;
         self.check_termination();
+        // An armed autopilot keeps the vehicle on the node vector.
+        let ap_c;
+        let c = if self
+            .autopilot
+            .is_some_and(|a| a.phase == AutopilotPhase::Aligning)
+        {
+            ap_c = Controls {
+                sas: SasMode::Maneuver,
+                ..*c
+            };
+            &ap_c
+        } else {
+            c
+        };
         if self.status == FlightStatus::Flying
             && c.sas != SasMode::Off
             && c.sas != SasMode::Hold
@@ -690,6 +830,7 @@ impl Flight {
         let columns = self.rcs_columns(&mp0, c.rcs);
         let arm = columns.iter().fold(1.0_f64, |a, (_, _, _, l)| a.max(*l));
         let cols: Vec<Wrench> = columns.iter().map(|(_, _, w, _)| *w).collect();
+        let c = &self.autopilot_controls(c, t0, mp0.mass, env.p_amb);
         let tau_req = self.control(prop, c, &env, t0, &mp0, omega, h_body, &cols, arm, dt);
         let act = self.actuate(c, &env, &mp0, tau_req, &columns, &cols, arm, dt);
 
@@ -723,6 +864,13 @@ impl Flight {
             self.last_thrust = Some(t1);
             let m_mid = 0.5 * (mp0.mass + mp1.mass);
             self.dv_expended += act.force_body.norm() / m_mid * dt;
+            if let Some(ap) = self.autopilot.as_mut()
+                && ap.phase == AutopilotPhase::Burning
+            {
+                let dv = f_i * (dt / m_mid);
+                ap.delivered += dv.dot(ap.direction);
+                ap.delivered_vector += dv;
+            }
             vec![Burn {
                 start: t0,
                 end: t1,
