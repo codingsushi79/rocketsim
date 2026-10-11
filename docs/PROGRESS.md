@@ -4,9 +4,9 @@
 |---|-----------|--------|
 | 0 | Decisions | ✅ Done (see `docs/decisions.md`) |
 | 1 | Project skeleton | ✅ Done |
-| 2 | Ephemeris pipeline (DE440 + satellite SPKs, Chebyshev runtime, Horizons tests, IAU rotation, Earth EOP) | ✅ Done, awaiting go-ahead |
-| 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ⏳ Next |
-| 4 | First render + **main menu and settings shell** (D11) | |
+| 2 | Ephemeris pipeline (DE440 + satellite SPKs, Chebyshev runtime, Horizons tests, IAU rotation, Earth EOP) | ✅ Done |
+| 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ✅ Done |
+| 4 | First render + **main menu and settings shell** (D11) | ⏳ In progress (owner: continue straight from M3) |
 | 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | |
 | 6 | Map view and maneuver nodes | |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | |
@@ -99,3 +99,59 @@
    script; the code doesn't change.
 2. **Uranus body center** (ura111xl-799, 1.0 GB) is still barycenter = body (D13).
 3. **Disk is tight: 3.1 GB free.** Kernels take 3.8 GB, `target/` 2.4 GB. A nep098 or Uranus kernel needs free space first: `cargo clean`, or delete kernels after a build, since `fetch-kernels.sh` restores them by checksum.
+
+## M2 follow-up: kernel upgrade (2026-10-11)
+- Neptune and Triton now come from **nep098** (NAIF, July 2026). Triton vs Horizons, Neptune-relative: 709 km → **0.1 m**.
+- Uranus body from **ura111xl-799**, a real planet center instead of the barycenter.
+- **DE442 was evaluated and reverted** (D14). It differs from Horizons' DE441 by up to 4 km (Mars) and 15 km (Jupiter) over 1950–2092, which fails the spec's 1 km check. The planets stay on DE440 (≤ 0.4 m vs Horizons, Moon 9 m).
+
+## M3: spacecraft propagation (2026-10-11)
+
+**What exists** (all in `sim-core`, headless, deterministic):
+- `integrator`: DOP853 (Hairer), 7th-order dense output, exact step-end restart, overshoot mode.
+  Chunked propagation is bit-identical to one run.
+- `kepler`: elements ↔ state (all special cases), universal-variable Kepler (all conics),
+  Hohmann, J2 secular rates.
+- `gravity`: spherical harmonics (Montenbruck & Gill recursion).
+  - Earth: EGM2008 up to 70×70 (zero-tide C̄₂₀).
+  - J2: Moon (GL0660B), Mars (MRO120F), Jupiter (Juno), Saturn (Cassini).
+- `atmosphere`: US76 (0–86 km) + **NRLMSISE-00** port of NRL's Fortran (> 86 km, blended);
+  Mars, Venus and Titan profiles.
+- `propagator`: n-body forces relative to the dominant body.
+  - Third bodies use Battin's f(q) form; distant planetary systems are resolved into planet
+    + moons within 10 SOI.
+  - Central harmonics, co-rotating drag, cannonball SRP with conical shadows, finite burns
+    with mass flow.
+  - SOI center switching (exact recentering), resolve-sphere, impact and dynamic-pressure
+    events, root-found on dense output.
+  - Trajectory object, with `state_at` for any epoch and `extend`.
+- `simctl propagate`: a headless run printing osculating elements (burn and force toggles).
+- Test ephemeris: `ephem-build subset` builds a 100-day window (365 KB) committed for CI.
+
+**Acceptance results** (release build, Apple M4)
+| Test (spec §6) | Result |
+|---|---|
+| Two-body conservation, 1,000 LEO orbits (64 days) | \|ΔE/E\| ≤ 1.7e-11, \|Δh/h\| ≤ 8.4e-12; 0.50 m from analytic Kepler at the end |
+| Kepler: circular / elliptical (e = 0.68) / parabolic / hyperbolic | 8e-5 / 0.12 / 7e-4 / 1.4e-4 m (default tolerance); converges to 0.6 mm at rtol 1e-14 |
+| Kepler worked examples | Vallado 2-4 (KEPLER), 2-5 (RV2COE), Curtis 4.3 reproduced |
+| J2 nodal precession, 800 km SSO | 0.9896°/day vs 0.9853°/day analytic (first-order, mean vs osculating a: 0.44%) |
+| Hohmann | Vallado Ex. 6-1 Δv 3.935224 km/s and TOF 5.256713 h reproduced. Simulated LEO→GEO arrives within 1 m of r_GEO; e < 1e-6 after circularization |
+| Tsiolkovsky | finite burn Δv = 665.909639 m/s = Isp·g₀·ln(m₀/m_f) to < 1e-7 relative; mass exact |
+| Warp invariance | 3 h coast, 60 Hz frame-by-frame vs one call: **bit-identical** states and step count |
+| Determinism | two runs bit-identical; canary (now incl. full propagator) native = WASM = `99e74aa0dc0af768` |
+| Center switching | lunar flyby (closest approach 12,689 km): switching vs single-center differ by 29 m after 6 days |
+| EGM2008 70×70 | vs independent 50-digit direct summation: 3.5e-16 relative |
+| NRLMSISE-00 | NRL driver cases 1–10: all densities and temperatures within printed precision |
+| US76 | NOAA table densities 0–86 km within 0.2% |
+| Shadow / SRP / drag wiring | umbra/penumbra/sunlight geometry, monotonic penumbra; SRP and drag vs hand formulas |
+| Impact | suborbital arc stops at h = −0.4 m (event root-found) |
+
+**Performance:** LEO with all forces (EGM2008 8×8, NRLMSISE-00, SRP, all third bodies):
+1 day = 792 steps in 94 ms (119 µs/step) natively. WASM core 584 KB.
+
+**Known limitations**
+- 3-hour Ap history mode of NRLMSISE-00 isn't ported (daily Ap only). No real space-weather feed yet.
+- No Charon (Pluto stays a barycenter) and no Uranian moons (system GM on Uranus).
+- Mars/Venus/Titan atmospheres are low-fidelity profiles.
+- Solid/ocean tides, relativity (PN terms) and Earth albedo/IR pressure aren't modelled. Each is
+  sub-meter-per-day in LEO; they will be added if a validation case needs them.

@@ -23,6 +23,14 @@ USAGE:
                                bodies by name or NAIF id
   simctl ground <lat°> <lon°> <h m> <UTC>
                                WGS84 ground site in GCRS (Earth-centered inertial)
+  simctl propagate [options]   propagate a spacecraft and print osculating elements
+      --epoch <UTC>            start (default 2026-11-01T00:00:00Z)
+      --alt <km> --inc <deg>   circular Earth orbit (default 400 km, 51.6°)
+      --mass <kg>              (default 15000)
+      --duration <N[s|m|h|d]>  (default 1d)   --every <N[s|m|h|d]> output interval (default 1h)
+      --degree <n>             EGM2008 degree/order (default 8)
+      --no-drag --no-srp --no-third-body --no-harmonics
+      --burn <start_s>,<dur_s>,<thrust_N>,<isp_s>,<prograde|retrograde|normal|antinormal|radial-out|radial-in>
   simctl bench                 time ephemeris and orientation evaluation
   simctl canary                print the determinism canary hash
   simctl version               print the core version";
@@ -45,6 +53,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         ["bench"] => cmd_bench(),
+        ["propagate", rest @ ..] => cmd_propagate(rest),
         ["canary"] => {
             println!("{:016x}", sim_core::determinism::canary());
             Ok(())
@@ -271,5 +280,155 @@ fn cmd_bench() -> Result<(), String> {
         start.elapsed().as_secs_f64() / f64::from(n) / bodies.len() as f64 * 1e9
     );
     std::hint::black_box(sink);
+    Ok(())
+}
+
+fn parse_duration(s: &str) -> Result<f64, String> {
+    let (num, unit) = s.split_at(s.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(s.len()));
+    let n: f64 = num.parse().map_err(|_| format!("bad duration: {s}"))?;
+    let k = match unit {
+        "" | "s" => 1.0,
+        "m" => 60.0,
+        "h" => 3600.0,
+        "d" => 86_400.0,
+        _ => return Err(format!("bad duration unit: {s}")),
+    };
+    Ok(n * k)
+}
+
+fn cmd_propagate(args: &[&str]) -> Result<(), String> {
+    use sim_core::constants::{earth_wgs84, gm};
+    use sim_core::kepler::Elements;
+    use sim_core::math::{V3, fmath};
+    use sim_core::propagator::{Burn, BurnDirection, Propagator, ScState};
+
+    let mut epoch = "2026-11-01T00:00:00Z".to_string();
+    let (mut alt_km, mut inc_deg, mut mass) = (400.0, 51.6, 15_000.0);
+    let (mut duration, mut every) = (86_400.0, 3_600.0);
+    let mut degree = 8usize;
+    let (mut drag, mut srp, mut third, mut harmonics) = (true, true, true, true);
+    let mut burn_spec: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(&a) = it.next() {
+        let mut val = || {
+            it.next()
+                .copied()
+                .ok_or_else(|| format!("{a} needs a value"))
+        };
+        let num = |v: &str| v.parse::<f64>().map_err(|_| format!("bad number: {v}"));
+        match a {
+            "--epoch" => epoch = val()?.to_string(),
+            "--alt" => alt_km = num(val()?)?,
+            "--inc" => inc_deg = num(val()?)?,
+            "--mass" => mass = num(val()?)?,
+            "--duration" => duration = parse_duration(val()?)?,
+            "--every" => every = parse_duration(val()?)?,
+            "--degree" => degree = val()?.parse().map_err(|_| "bad degree".to_string())?,
+            "--no-drag" => drag = false,
+            "--no-srp" => srp = false,
+            "--no-third-body" => third = false,
+            "--no-harmonics" => harmonics = false,
+            "--burn" => burn_spec = Some(val()?.to_string()),
+            _ => return Err(format!("unknown option {a}\n{USAGE}")),
+        }
+    }
+    let (_, t0) = parse_epoch(&epoch)?;
+    let eph = load_ephemeris()?;
+    let reg = BodyRegistry::builtin();
+    let mut p = Propagator::new(&eph, &reg);
+    p.forces.drag = drag;
+    p.forces.srp = srp;
+    p.forces.third_body = third;
+    p.forces.harmonics = harmonics;
+    p.forces.earth_degree = degree;
+    let r = earth_wgs84::A + alt_km * 1e3;
+    let v = (gm::EARTH / r).sqrt();
+    let (si, ci) = fmath::sin_cos(inc_deg.to_radians());
+    let s0 = ScState {
+        epoch: t0,
+        state: State::new(
+            V3::new(r, 0.0, 0.0),
+            V3::new(0.0, v * ci, v * si),
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass,
+    };
+    let mut burns = Vec::new();
+    if let Some(spec) = burn_spec {
+        let f: Vec<&str> = spec.split(',').collect();
+        if f.len() != 5 {
+            return Err("--burn needs start,duration,thrust,isp,direction".into());
+        }
+        let n = |x: &str| x.parse::<f64>().map_err(|_| format!("bad number {x}"));
+        let direction = match f[4] {
+            "prograde" => BurnDirection::Prograde,
+            "retrograde" => BurnDirection::Retrograde,
+            "normal" => BurnDirection::Normal,
+            "antinormal" => BurnDirection::AntiNormal,
+            "radial-out" => BurnDirection::RadialOut,
+            "radial-in" => BurnDirection::RadialIn,
+            d => return Err(format!("bad burn direction {d}")),
+        };
+        let start = t0.add_seconds(n(f[0])?);
+        burns.push(Burn {
+            start,
+            end: start.add_seconds(n(f[1])?),
+            thrust: n(f[2])?,
+            isp: n(f[3])?,
+            direction,
+        });
+    }
+    let clock = std::time::Instant::now();
+    let traj = p
+        .propagate(&s0, t0.add_seconds(duration), &burns)
+        .map_err(|e| e.to_string())?;
+    let elapsed = clock.elapsed();
+    println!(
+        "{:>10} {:>8} {:>11} {:>10} {:>9} {:>9} {:>9} {:>9} {:>11}",
+        "t [h]", "center", "a [km]", "e", "i [°]", "Ω [°]", "ω [°]", "ν [°]", "mass [kg]"
+    );
+    let mut t: f64 = 0.0;
+    loop {
+        let tt = t.min(duration);
+        let Some(s) = traj.state_at(t0.add_seconds(tt)) else {
+            break;
+        };
+        let mu = reg.get(s.state.frame.center).map_or(gm::EARTH, |b| b.gm);
+        let el = Elements::from_state(s.state.r, s.state.v, mu);
+        let name = reg
+            .get(s.state.frame.center)
+            .map_or("?".to_string(), |b| b.name.clone());
+        println!(
+            "{:>10.3} {:>8} {:>11.3} {:>10.7} {:>9.4} {:>9.4} {:>9.4} {:>9.4} {:>11.3}",
+            tt / 3600.0,
+            name,
+            el.a / 1e3,
+            el.e,
+            el.i.to_degrees(),
+            el.raan.to_degrees(),
+            el.argp.to_degrees(),
+            el.nu.to_degrees(),
+            s.mass
+        );
+        if tt >= duration {
+            break;
+        }
+        t += every;
+    }
+    if let Some(end) = traj.terminated() {
+        println!(
+            "terminated: {end:?} at t = {:.1} s",
+            traj.end_epoch().seconds_since(t0)
+        );
+    }
+    println!(
+        "{} arcs, {} integration steps, {:.1} ms wall ({:.1} µs/step)",
+        traj.arcs.len(),
+        traj.step_count(),
+        elapsed.as_secs_f64() * 1e3,
+        elapsed.as_secs_f64() * 1e6 / traj.step_count().max(1) as f64
+    );
     Ok(())
 }

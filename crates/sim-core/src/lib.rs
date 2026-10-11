@@ -6,6 +6,7 @@
 //! - Deterministic: transcendental math only via [`math::fmath`] (libm).
 //! - Physical constants only from [`constants`], with citations.
 
+pub mod atmosphere;
 pub mod bodies;
 pub mod chebyshev;
 pub mod constants;
@@ -13,9 +14,15 @@ pub mod determinism;
 pub mod earth;
 pub mod ephemeris;
 pub mod frames;
+pub mod gravity;
+pub mod integrator;
+pub mod kepler;
 pub mod math;
 pub mod naif_text_kernel;
+pub mod nrlmsise00;
+mod nrlmsise00_data;
 pub mod orientation;
+pub mod propagator;
 pub mod time;
 
 /// Crate version, shown in the UI and embedded in save files.

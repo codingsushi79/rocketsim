@@ -137,10 +137,66 @@ pub fn canary() -> u64 {
         h.v3(o.icrf_to_bf.rows[0]);
         h.v3(o.icrf_to_bf.rows[2]);
     }
+    // Full propagator: EGM2008 8×8, NRLMSISE-00/US76 drag, SRP with shadows, a burn,
+    // with a static Sun–Earth ephemeris (no file I/O).
+    h.f64(propagator_workload());
     let u = tdb_to_utc(e).expect("in table range");
     h.f64(u.second);
     h.f64(Epoch::J2000.add_seconds(-1.5).tdb_parts().1);
     h.0
+}
+
+fn propagator_workload() -> f64 {
+    use crate::bodies::BodyRegistry;
+    use crate::constants::ASTRONOMICAL_UNIT;
+    use crate::ephemeris::{Chunk, Ephemeris, quantize};
+    use crate::propagator::{Burn, BurnDirection, Propagator, ScState};
+    let mut eph = Ephemeris::new();
+    for (target, x) in [(BodyId::SUN, 0.0), (BodyId::EARTH, ASTRONOMICAL_UNIT)] {
+        eph.insert(Chunk {
+            target,
+            center: BodyId::SSB,
+            start: 0,
+            seg_len: 10_000_000_000,
+            n_seg: 1,
+            n_coef: 1,
+            quantum: 1e-3,
+            coefs: vec![quantize(x, 1e-3), 0.0, 0.0],
+        })
+        .expect("valid chunk");
+    }
+    let reg = BodyRegistry::builtin();
+    let p = Propagator::new(&eph, &reg);
+    let t0 = Epoch::from_tdb_seconds(8.4e8);
+    let s0 = ScState {
+        epoch: t0,
+        state: State::new(
+            V3::new(6_678_137.0, 0.0, 0.0),
+            V3::new(0.0, 4_800.0, 6_000.0),
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass: 12_000.0,
+    };
+    let burn = Burn {
+        start: t0.add_seconds(600.0),
+        end: t0.add_seconds(660.0),
+        thrust: 30_000.0,
+        isp: 315.0,
+        direction: BurnDirection::Prograde,
+    };
+    let traj = p
+        .propagate(&s0, t0.add_seconds(7_200.0), &[burn])
+        .expect("propagates");
+    let mut acc = 0.0;
+    for k in 0..=24 {
+        let s = traj
+            .state_at(t0.add_seconds(f64::from(k) * 300.0))
+            .expect("covered");
+        acc += s.state.r.x + s.state.v.y * 1e-3 + s.mass;
+    }
+    acc
 }
 
 #[cfg(test)]
@@ -158,5 +214,5 @@ mod tests {
         assert_eq!(format!("{:016x}", canary()), GOLDEN);
     }
 
-    const GOLDEN: &str = "75fbc3bb150b774d";
+    const GOLDEN: &str = "99e74aa0dc0af768";
 }

@@ -548,6 +548,52 @@ fn cmd_verify(dir: &Path, n: usize) {
     println!("verify OK ({} files, {n} epochs per body)", files.len());
 }
 
+/// Cut the built files down to the segments overlapping [from, to] (TDB s). Used for
+/// small committed test fixtures; same fit as the shipped files.
+fn cmd_subset(dir: &Path, from: f64, to: f64, out: &Path) {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .expect("dir")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "rseph"))
+        .collect();
+    files.sort();
+    let mut chunks = Vec::new();
+    let mut meta = String::new();
+    for f in &files {
+        let (cs, m) =
+            sim_core::ephemeris::decode(&std::fs::read(f).expect("read")).expect("decode");
+        if meta.is_empty() {
+            meta = m;
+        }
+        for c in cs {
+            let w = 3 * c.n_coef as usize;
+            let first = ((from - c.start as f64) / c.seg_len as f64)
+                .floor()
+                .max(0.0) as i64;
+            let last =
+                (((to - c.start as f64) / c.seg_len as f64).ceil() as i64).min(i64::from(c.n_seg));
+            if last <= first {
+                continue;
+            }
+            let (a, b) = (first as usize, last as usize);
+            chunks.push(Chunk {
+                start: c.start + first * c.seg_len,
+                n_seg: (b - a) as u32,
+                coefs: c.coefs[a * w..b * w].to_vec(),
+                ..c
+            });
+        }
+    }
+    let bytes = encode(&chunks, &format!("{meta} | subset TDB [{from}, {to}] s"));
+    std::fs::write(out, &bytes).expect("write");
+    println!(
+        "wrote {} ({} chunks, {:.0} KB)",
+        out.display(),
+        chunks.len(),
+        bytes.len() as f64 / 1e3
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -555,6 +601,12 @@ fn main() {
         ["build"] => cmd_build(Path::new("web/public/ephemeris")),
         ["build", "--out", d] => cmd_build(Path::new(d)),
         ["fixture", e, o] => cmd_fixture(Path::new(e), Path::new(o)),
+        ["subset", dir, from, to, out] => cmd_subset(
+            Path::new(dir),
+            from.parse().expect("from"),
+            to.parse().expect("to"),
+            Path::new(out),
+        ),
         ["verify"] => cmd_verify(Path::new("web/public/ephemeris"), 2000),
         ["verify", "--dir", d] => cmd_verify(Path::new(d), 2000),
         ["verify", "--dir", d, "--n", n] => cmd_verify(Path::new(d), n.parse().expect("N")),

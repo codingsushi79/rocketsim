@@ -30,6 +30,10 @@ pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
 /// Astronomical unit, m. Exact by definition [IAU2012B2].
 pub const ASTRONOMICAL_UNIT: f64 = 149_597_870_700.0;
 
+/// Total solar irradiance at 1 au, W/m² (IAU 2015 Resolution B3 nominal value,
+/// S☉ = 1361 W/m²). Used for solar radiation pressure.
+pub const SOLAR_IRRADIANCE_1AU: f64 = 1361.0;
+
 /// Standard gravity, m/s². Used for Isp ↔ exhaust velocity [CGPM1901].
 pub const G0: f64 = 9.806_65;
 
@@ -218,4 +222,35 @@ pub mod radii {
     pub const CERES: Radii = Radii::new(487_300.0, 487_300.0, 446_000.0);
     /// BODY2000004_RADII = 289, 280, 229 km
     pub const VESTA: Radii = Radii::new(289_000.0, 280_000.0, 229_000.0);
+}
+
+/// Gravity-field coefficients (degree 2) for the non-Earth bodies with harmonics
+/// (spec §2.2). Earth uses the full EGM2008 model in `data/gravity/` (see
+/// [`crate::gravity`]).
+pub mod gravity_fields {
+    /// Moon, GRAIL GL0660B (Konopliv et al. 2013, JGR Planets 118:1415). Fully
+    /// normalized C̄₂₀ = −0.9088083466222001e-4 (ICGEM file header and coefficients), at
+    /// reference radius 1738.0 km.
+    pub const MOON_C20_NORMALIZED: f64 = -0.908_808_346_622_200_1e-4;
+    pub const MOON_RADIUS: f64 = 1_738_000.0;
+    /// Mars, MRO120F (Konopliv et al. 2020, Icarus 335:113386; PDS
+    /// MRO-M-RSS-5-SDP-V1.0 jgmro_120f_sha.tab). C̄₂₀ = −0.8750219819894e-3 at 3396.0 km.
+    pub const MARS_C20_NORMALIZED: f64 = -0.875_021_981_989_4e-3;
+    pub const MARS_RADIUS: f64 = 3_396_000.0;
+    /// Jupiter, Juno (Durante et al. 2020, GRL 47:e2019GL086572), unnormalized
+    /// J₂ = 14696.5735e-6 at 71,492 km (as tabulated in Howard et al. 2023, A&A 672:A33,
+    /// Table 4; consistent with Iess et al. 2018's 14696.572 ± 0.014e-6). Includes the
+    /// permanent tide (6.72e-8).
+    pub const JUPITER_J2: f64 = 14_696.573_5e-6;
+    pub const JUPITER_RADIUS: f64 = 71_492_000.0;
+    /// Saturn, Cassini Grand Finale (Iess et al. 2019, Science 364:eaat2965),
+    /// unnormalized J₂ = 16290.573e-6 at 60,330 km. Cross-check: rescaled to 60,268 km
+    /// this is 16324.12e-6, matching the 16324.108e-6 tabulated at that radius.
+    pub const SATURN_J2: f64 = 16_290.573e-6;
+    pub const SATURN_RADIUS: f64 = 60_330_000.0;
+    /// Permanent-tide offset of C̄₂₀: zero-tide − tide-free = A₀H₀k₂₀ (IERS Conventions
+    /// 2010, eq. 6.14), with A₀H₀ = 4.4228e-8 × (−0.31460 m) and k₂₀ = 0.30190.
+    /// EGM2008 is distributed tide-free. When solid tides are not modelled, the
+    /// zero-tide C̄₂₀ (which keeps the permanent tide in the static field) is the one to use.
+    pub const EARTH_C20_PERMANENT_TIDE: f64 = 4.4228e-8 * -0.31460 * 0.30190;
 }

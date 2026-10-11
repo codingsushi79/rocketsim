@@ -52,6 +52,28 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **License:** U.S. Government work (NASA/JPL)
 - **Retrieved:** 2026-10-10 (per-body Horizons ephemeris sources recorded in the file header)
 
+### EGM2008 Earth gravity model: `data/gravity/EGM2008_to90.gfc` (degree ≤ 90 of the full model)
+- **Source:** ICGEM, GFZ Potsdam, https://icgem.gfz.de/tom_longtime (EGM2008.gfc, streamed and truncated to degree 90)
+- **Reference:** Pavlis, N. K., Holmes, S. A., Kenyon, S. C., Factor, J. K. (2012), "The development and evaluation of the Earth Gravitational Model 2008 (EGM2008)", *JGR* 117:B04406. Produced by the U.S. National Geospatial-Intelligence Agency (NGA).
+- **License:** NGA product released for public use (U.S. Government work). ICGEM distributes it freely; cite Pavlis et al.
+- **Retrieved:** 2026-10-11
+
+### Planetary gravity coefficients (degree 2), in `crates/sim-core/src/constants.rs`
+| Body | Model | Source | Reference |
+|---|---|---|---|
+| Moon | GL0660B | ICGEM (https://icgem.gfz.de/tom_celestial) | Konopliv et al. 2013, JGR Planets 118:1415 |
+| Mars | MRO120F | PDS Geosciences, MRO-M-RSS-5-SDP-V1.0, `jgmro_120f_sha.tab` | Konopliv et al. 2020, Icarus 335:113386 |
+| Jupiter | Juno (Durante 2020) | PDS Atmospheres model log; value as tabulated in Howard et al. 2023, A&A 672:A33 | Durante et al. 2020, GRL 47:e2019GL086572 |
+| Saturn | Cassini Grand Finale | published value | Iess et al. 2019, Science 364:eaat2965 |
+- **License:** NASA/JPL and mission data products, public. Values are cited facts.
+- **Retrieved:** 2026-10-11
+
+### NRLMSISE-00 atmosphere model: ported in `crates/sim-core/src/nrlmsise00.rs` (+ generated `nrlmsise00_data.rs`)
+- **Source:** Naval Research Laboratory Fortran `nrlmsise00_sub.for`, `nrlmsise00_driver.for`, `nrlmsise00_output.txt`, from the NASA CCMC ModelWeb archive (https://git.smce.nasa.gov/ccmc-share/modelwebarchive, MSIS/NRLMSIS00)
+- **Reference:** Picone, J. M., Hedin, A. E., Drob, D. P., Aikin, A. C. (2002), "NRLMSISE-00 empirical model of the atmosphere: Statistical comparisons and scientific issues", *JGR* 107(A12):1468.
+- **License:** U.S. Government work (NRL), public domain in the U.S. The C translation by D. Brodowski was **not** used: it carries no license grant.
+- **Retrieved:** 2026-10-11
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`
@@ -65,6 +87,15 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **License:** SpiceyPy MIT; CSPICE is NAIF's freely distributed toolkit
 - **Used for:** IAU body orientation reference (`tisbod`). Generator: `tools/fixtures/gen_iau_rotation_spice.py`.
 - **Retrieved:** 2026-10-10
+
+### Ported code: DOP853 (`crates/sim-core/src/integrator.rs`)
+- **Source:** E. Hairer, `dop853.f` (2004), http://www.unige.ch/~hairer/prog/nonstiff/dop853.f
+- **Reference:** Hairer, Nørsett, Wanner, *Solving Ordinary Differential Equations I*, 2nd ed. (1993), §II.10
+- **License:** BSD-2-Clause, Copyright (c) 2004, UNIGE. Full text: `third_party/HAIRER-LICENSE.txt`.
+- **Retrieved:** 2026-10-11
+
+### mpmath (test fixture generation only): `tests/fixtures/egm2008_accel_reference.csv`
+- **Source:** https://mpmath.org (BSD-3-Clause). Used in `tools/fixtures/gen_sh_reference.py` for the independent 50-digit spherical-harmonic reference.
 
 ### Ported code: ERFA 2.0.1 (Earth orientation coefficients in `crates/sim-core/src/earth.rs`)
 - **Source:** https://github.com/liberfa/erfa: `eraPfw06`, `eraObl06`, `eraNut00b` (77-term table), `eraNut06a` adjustments, `eraGmst06`, `eraEra00`, `eraEe00`, `eraEect00`, `eraFa*03`, `eraPom00`, `eraSp00`
@@ -92,4 +123,10 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - Earth orientation: IERS Conventions (2010), IERS Technical Note 36, ch. 5; McCarthy & Luzum (2003), Celest. Mech. Dyn. Astr. 85:37 (IAU 2000B).
 - ΔT before 1973: Espenak & Meeus (2006), NASA/TP-2006-214141.
 - Geodetic conversion: Bowring (1976), Survey Review 23:181.
+- Gravity harmonics recursion: Montenbruck & Gill, *Satellite Orbits* (2000), §3.2.4–3.2.5. Conical shadow: same, §3.4.2.
+- Third-body f(q): R. H. Battin, *An Introduction to the Mathematics and Methods of Astrodynamics*, rev. ed. (1999), §8.4.
+- Kepler/universal variables, elements, Hohmann, J2 rates: Vallado 4th ed. Alg. 8–10, §6.3, §9.6; Curtis 3rd ed. §3.7.
+- US Standard Atmosphere 1976: NOAA-S/T 76-1562 (NASA-TM-X-74335).
+- Mars atmosphere: NASA Glenn Research Center, "Mars Atmosphere Model". Venus: NASA GSFC Venus Fact Sheet. Titan: Fulchignoni et al. 2005, Nature 438:785 (Huygens HASI).
+- Solar irradiance: IAU 2015 Resolution B3 (1361 W/m²).
 - Rotation matrices: D. A. Vallado, *Fundamentals of Astrodynamics and Applications*, 4th ed., §3.3.

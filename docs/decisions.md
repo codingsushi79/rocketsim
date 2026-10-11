@@ -25,3 +25,12 @@ Decisions confirmed with the project owner. Changing any of these needs their si
 | D12 | Ephemeris fit tolerance | Positions ≤ 1 m, velocities ≤ 1 cm/s, measured after coefficient quantization. Velocity is the analytic derivative of the position fit. A 1 mm/s limit roughly tripled the short-period moon files with no physical benefit, since the kernels' own uncertainty is far larger. |
 | D13 | Uranus body center | Uranus relative to its barycenter comes from ura111xl-799 (approved 2026-10-11). It replaced an interim zero-offset chunk. |
 | D14 | Planetary ephemeris version | **DE440** for planets, Sun and Moon. The owner approved DE442 on 2026-10-11, but measurement showed DE442 vs Horizons' DE441 differs by up to 4 km (Mars) and 15 km (Jupiter) over 1950–2092. That fails the spec's "≤ 1 km vs Horizons" check, and the brief names DE440/DE441. Kept from the upgrade: **nep098** for Neptune and Triton (fixes a 709 km Triton gap; Triton now matches Horizons to 0.1 m relative to Neptune) and the Uranus kernel. Switching to DE442 is a one-line change in the fetch script and builder if the owner prefers the newer orbits. |
+
+## M3 (2026-10-11)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| D15 | Integrator tolerance | DOP853 with rtol 1e-12 and atol 1e-7 (m, m/s, kg) by default. Measured: 0.12 m vs the analytic solution over 3 days on an e = 0.68 orbit, and 0.5 m over 1,000 LEO orbits. Error converges ~10× per decade of tolerance. |
+| D16 | Gravity GM convention | Monopoles use DE440's TDB-compatible GMs, consistent with the ephemeris and the TDB clock. EGM2008 coefficients are used with zero-tide C̄₂₀ (IERS 2010 eq. 6.14), since solid tides are not modelled. Harmonic degree is capped at 70 by the unnormalized recursion. |
+| D17 | Atmosphere scope | Earth: US76 below 86 km, NRLMSISE-00 (thermospheric branch, daily-Ap mode) above, log-linear blend over 86–91 km. Space weather is configurable (default F10.7 = 150, Ap = 4) until a real space-weather feed is added. Mars/Venus/Titan use documented low-fidelity profiles in v1. |
+| D18 | Center switching and body resolution | Integration center = innermost SOI (Laplace radius from the current parent distance), 2% exit hysteresis. A planetary system is one barycentric point mass until within 10 SOI radii. Pluto is always a barycenter (Charon is not a v1 body), and Uranus carries its system GM (its moons are not v1 bodies). |
