@@ -62,7 +62,8 @@ fn two_body_conserves_energy_and_momentum_over_1000_orbits() {
         51.6f64.to_radians(),
         1000.0,
     );
-    let period = std::f64::consts::TAU * (6_778_137.0f64 * 6_778_137.0 * 6_778_137.0 / gm::EARTH).sqrt();
+    let period =
+        std::f64::consts::TAU * (6_778_137.0f64 * 6_778_137.0 * 6_778_137.0 / gm::EARTH).sqrt();
     let traj = p
         .propagate(&s0, t0().add_seconds(1000.0 * period), &[])
         .unwrap();
