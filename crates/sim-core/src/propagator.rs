@@ -86,6 +86,9 @@ pub struct Burn {
     /// Specific impulse, s (mass flow ṁ = −F / (Isp·g₀)).
     pub isp: f64,
     pub direction: BurnDirection,
+    /// Mass flow override, kg/s (≥ 0), replacing F/(Isp·g₀). Used when thrusters partly
+    /// cancel (RCS couples), so the net thrust doesn't measure the propellant used.
+    pub mass_flow: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -99,6 +102,11 @@ pub struct ForceConfig {
     pub space_weather: SpaceWeather,
     /// Stop when dynamic pressure exceeds this (Pa). `f64::INFINITY` disables it.
     pub max_dynamic_pressure: f64,
+    /// Stop when the stagnation heat flux (Sutton–Graves, [`atmosphere::stagnation_heat_flux`])
+    /// exceeds this (W/m²). `f64::INFINITY` disables it.
+    pub max_heat_flux: f64,
+    /// Effective nose radius for the heat-flux estimate, m.
+    pub nose_radius: f64,
 }
 
 impl Default for ForceConfig {
@@ -111,6 +119,8 @@ impl Default for ForceConfig {
             srp: true,
             space_weather: SpaceWeather::default(),
             max_dynamic_pressure: f64::INFINITY,
+            max_heat_flux: f64::INFINITY,
+            nose_radius: 1.0,
         }
     }
 }
@@ -152,6 +162,9 @@ pub enum ArcEnd {
     },
     DynamicPressureLimit {
         q: f64,
+    },
+    HeatFluxLimit {
+        flux: f64,
     },
 }
 
@@ -221,9 +234,33 @@ impl Trajectory {
     /// True if the trajectory ended at a terminal event (impact or breakup).
     pub fn terminated(&self) -> Option<ArcEnd> {
         match self.arcs.last()?.end {
-            e @ (ArcEnd::Impact { .. } | ArcEnd::DynamicPressureLimit { .. }) => Some(e),
+            e @ (ArcEnd::Impact { .. }
+            | ArcEnd::DynamicPressureLimit { .. }
+            | ArcEnd::HeatFluxLimit { .. }) => Some(e),
             _ => None,
         }
+    }
+
+    /// Cut the trajectory at `t` (which must lie inside it). The next `extend` starts a
+    /// new arc from the interpolated state at `t`. Used when switching from on-rails
+    /// prediction to step-by-step flight.
+    pub fn truncate_after(&mut self, t: Epoch) {
+        while self.arcs.len() > 1
+            && self
+                .arcs
+                .last()
+                .is_some_and(|a| t.seconds_since(a.base.add_seconds(a.t_start)) < 0.0)
+        {
+            self.arcs.pop();
+        }
+        let a = self.arcs.last_mut().expect("non-empty");
+        let local = t
+            .seconds_since(a.base)
+            .clamp(a.t_start, a.t_end.max(a.t_start));
+        let keep = a.steps.partition_point(|s| s.t0 < local);
+        a.steps.truncate(keep.max(1).min(a.steps.len()));
+        a.t_end = local;
+        a.end = ArcEnd::BurnBoundary;
     }
 
     pub fn step_count(&self) -> usize {
@@ -506,7 +543,10 @@ impl ArcModel<'_> {
                 BurnDirection::RadialIn => -r.normalized().unwrap_or(V3::ZERO),
             };
             a += dir * (b.thrust / mass);
-            mdot = -b.thrust / (b.isp * G0);
+            mdot = match b.mass_flow {
+                Some(m) => -m,
+                None => -b.thrust / (b.isp * G0),
+            };
         }
 
         [y[3], y[4], y[5], a.x, a.y, a.z, mdot]
@@ -568,6 +608,7 @@ enum Event {
     Resolve { system: usize, resolved: bool },
     Impact,
     DynamicPressure,
+    HeatFlux,
 }
 
 /// The propagator: ephemeris + body data + configuration.
@@ -580,6 +621,10 @@ pub struct Propagator<'a> {
     /// Switch the integration center at SOI crossings (default). When off, the
     /// initial center is kept: useful for validation against single-center solutions.
     pub center_switching: bool,
+    /// End every extension exactly at the requested time instead of at the next natural
+    /// step end. Step-by-step flight (fixed control ticks) needs this; on-rails coasting
+    /// leaves it off so chunked propagation stays bit-identical.
+    pub exact_horizon: bool,
 }
 
 impl<'a> Propagator<'a> {
@@ -591,6 +636,7 @@ impl<'a> Propagator<'a> {
             integrator: IntegratorConfig::default(),
             ballistic: Ballistic::default(),
             center_switching: true,
+            exact_horizon: false,
         }
     }
 
@@ -777,6 +823,9 @@ impl<'a> Propagator<'a> {
         if self.forces.max_dynamic_pressure.is_finite() {
             ev.push(Event::DynamicPressure);
         }
+        if self.forces.max_heat_flux.is_finite() {
+            ev.push(Event::HeatFlux);
+        }
         ev
     }
 
@@ -820,6 +869,24 @@ impl<'a> Propagator<'a> {
                 let omega_i = o.icrf_to_bf.transpose().mul_v3(o.omega_bf);
                 let v_rel = V3::new(y[3], y[4], y[5]) - omega_i.cross(r);
                 0.5 * rho * v_rel.norm_squared() - self.forces.max_dynamic_pressure
+            }
+            Event::HeatFlux => {
+                let Some(o) = m.orientation(t) else {
+                    return Ok(-1.0);
+                };
+                let r_bf = o.icrf_to_bf.mul_v3(r);
+                let rho = atmosphere::density(m.center, r_bf, t, &self.forces.space_weather)
+                    .unwrap_or(0.0);
+                let omega_i = o.icrf_to_bf.transpose().mul_v3(o.omega_bf);
+                let v_rel = V3::new(y[3], y[4], y[5]) - omega_i.cross(r);
+                atmosphere::stagnation_heat_flux(
+                    m.center,
+                    rho,
+                    v_rel.norm(),
+                    self.forces.nose_radius,
+                )
+                .unwrap_or(0.0)
+                    - self.forces.max_heat_flux
             }
         })
     }
@@ -876,7 +943,9 @@ impl<'a> Propagator<'a> {
             }
             let last = traj.arcs.last().expect("non-empty");
             let now = last.base.add_seconds(last.t_end);
-            if now.seconds_since(until) >= 0.0 {
+            // 1 ns slack: an arc's local end time converted back to an epoch can fall an
+            // ulp short of `until`, and re-integrating a zero-length interval never ends.
+            if now.seconds_since(until) >= -1e-9 {
                 return Ok(());
             }
             // Burn active now, and the next burn boundary.
@@ -914,7 +983,7 @@ impl<'a> Propagator<'a> {
                 h_max: self.integrator.h_max,
                 max_steps: 50_000_000,
                 // Burn boundaries must be hit exactly; horizons may overshoot.
-                overshoot: !hits_burn,
+                overshoot: !hits_burn && !self.exact_horizon,
             };
             let t_target = boundary.seconds_since(base);
             let mut steps = Vec::new();
@@ -989,6 +1058,8 @@ impl<'a> Propagator<'a> {
             let (t_end, end) = match fired {
                 Some((tf, e)) => (tf, self.event_end(&model, &e, tf, &steps)?),
                 None if hits_burn => (t_target, ArcEnd::BurnBoundary),
+                // t + (t_end − t) can miss t_end by an ulp; an exact horizon must land on it.
+                None if self.exact_horizon => (t_target, ArcEnd::Horizon),
                 None => (result.t, ArcEnd::Horizon),
             };
             // Append to the current arc when continuing, else start a new one.
@@ -1055,6 +1126,13 @@ impl<'a> Propagator<'a> {
                 let g = self.g(m, e, tf, &y)?;
                 ArcEnd::DynamicPressureLimit {
                     q: g + self.forces.max_dynamic_pressure,
+                }
+            }
+            Event::HeatFlux => {
+                let y = steps.last().expect("step").eval(tf);
+                let g = self.g(m, e, tf, &y)?;
+                ArcEnd::HeatFluxLimit {
+                    flux: g + self.forces.max_heat_flux,
                 }
             }
         })

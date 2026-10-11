@@ -102,6 +102,67 @@ fn earth_density(r_bf: V3, t: Epoch, sw: &SpaceWeather) -> Option<f64> {
     Some(fmath::exp((1.0 - w) * fmath::ln(a) + w * fmath::ln(b)))
 }
 
+/// Ambient static pressure, Pa, at body-fixed position `r_bf` (0 outside an
+/// atmosphere). Used for engine back-pressure.
+/// - Earth: US76 up to 86 km (0.37 Pa there). Above that, 0 is used: the error in
+///   thrust is under 1 N for any nozzle in the data.
+/// - Mars: the same NASA Glenn fit as the density.
+/// - Venus, Titan: isothermal profiles with the same scale heights as the density.
+pub fn pressure(body: BodyId, r_bf: V3) -> f64 {
+    match body {
+        BodyId::EARTH => {
+            let h = earth::itrs_to_geodetic(r_bf).2;
+            if h > BLEND_LOW_KM * 1000.0 {
+                0.0
+            } else {
+                us76_pressure_temperature(h.max(0.0)).0
+            }
+        }
+        BodyId::MARS => {
+            let h = r_bf.norm() - radii::MARS.equatorial_mean();
+            if h > 200e3 {
+                0.0
+            } else {
+                699.0 * fmath::exp(-0.00009 * h.max(0.0))
+            }
+        }
+        BodyId::VENUS => {
+            let h = r_bf.norm() - radii::VENUS.a;
+            if h > 250e3 {
+                0.0
+            } else {
+                VENUS_P0 * fmath::exp(-h.max(0.0) / VENUS_H)
+            }
+        }
+        BodyId::TITAN => {
+            let h = r_bf.norm() - radii::TITAN.equatorial_mean();
+            if h > 1500e3 {
+                0.0
+            } else {
+                TITAN_P0 * fmath::exp(-h.max(0.0) / TITAN_H)
+            }
+        }
+        _ => 0.0,
+    }
+}
+
+/// Sutton–Graves stagnation-point convective heat flux q = k·√(ρ/r_n)·v³ (W/m²), for
+/// free-stream density ρ (kg/m³), air-relative speed v (m/s) and nose radius r_n (m).
+/// k from Sutton & Graves, "A general stagnation-point convective heating equation for
+/// arbitrary gas mixtures", NASA TR R-376 (1971): Earth air 1.7415e-4, Mars CO₂/N₂
+/// 1.9027e-4 kg^½/m. `None` for bodies without a published coefficient.
+pub fn stagnation_heat_flux(body: BodyId, rho: f64, v: f64, nose_radius: f64) -> Option<f64> {
+    let k = match body {
+        BodyId::EARTH => 1.7415e-4,
+        BodyId::MARS => 1.9027e-4,
+        _ => return None,
+    };
+    if !(rho > 0.0 && nose_radius > 0.0) {
+        return Some(0.0);
+    }
+    Some(k * (rho / nose_radius).sqrt() * v * v * v)
+}
+
 // ---------------------------------------------------------------------------
 // U.S. Standard Atmosphere 1976, 0–86 km (NOAA-S/T 76-1562, §1.2–1.3, Table 4)
 // ---------------------------------------------------------------------------
@@ -122,6 +183,13 @@ const US76_LB: [f64; 7] = [-6.5, 0.0, 1.0, 2.8, 0.0, -2.8, -2.0];
 /// hydrostatic layer equations (US76 eqs. 33a/33b). ρ = P·M₀/(R*·T_M) holds through
 /// 80–86 km, where only the kinetic temperature, not T_M, changes.
 pub fn us76_density(z: f64) -> f64 {
+    let (p, t) = us76_pressure_temperature(z);
+    p * US76_M0 / (US76_RSTAR * t)
+}
+
+/// Pressure (Pa) and molecular-scale temperature (K) at geometric altitude `z` (m),
+/// 0 ≤ z ≤ 86 km (US76 eqs. 33a/33b).
+pub fn us76_pressure_temperature(z: f64) -> (f64, f64) {
     let h = US76_R0 * z / (US76_R0 + z) / 1000.0; // geopotential km′
     let gmr = US76_G0 * US76_M0 / US76_RSTAR * 1000.0; // K per km′ (34.163195)
     let (mut tb, mut pb) = (US76_T0, US76_P0);
@@ -136,7 +204,7 @@ pub fn us76_density(z: f64) -> f64 {
             (t, pb * fmath::pow(tb / t, gmr / lb))
         };
         if h <= top || i == 6 {
-            return p * US76_M0 / (US76_RSTAR * t);
+            return (p, t);
         }
         tb = t;
         pb = p;
@@ -170,11 +238,15 @@ fn mars_density(h: f64) -> Option<f64> {
 /// 15.9 km).
 const VENUS_RHO0: f64 = 65.0;
 const VENUS_H: f64 = 15_900.0;
+/// Venus surface pressure (same fact sheet: 92 bar).
+const VENUS_P0: f64 = 9.2e6;
 /// Titan surface density from Huygens HASI (Fulchignoni et al. 2005, Nature 438:785):
 /// p = 146.7 kPa, T = 93.65 K, N₂ → ρ = pM/(RT) ≈ 5.27 kg/m³. Isothermal scale height
 /// RT/(Mg) with g = 1.352 m/s² → 20.6 km.
 const TITAN_RHO0: f64 = 5.27;
 const TITAN_H: f64 = 20_600.0;
+/// Titan surface pressure (Huygens HASI, as above).
+const TITAN_P0: f64 = 146_700.0;
 
 fn exponential(h: f64, rho0: f64, scale: f64, top: f64) -> Option<f64> {
     if h > top {
@@ -216,6 +288,24 @@ mod tests {
             let (lo, hi) = (at(h - 1.0), at(h + 1.0));
             assert!((hi / lo - 1.0).abs() < 1e-3, "{h}: {lo:e} → {hi:e}");
         }
+    }
+
+    #[test]
+    fn us76_sea_level_and_tropopause_pressure() {
+        // US76 Table I: 101325 Pa at 0 m; 22632 Pa at 11 km′ geopotential (11019 m geometric).
+        assert!((us76_pressure_temperature(0.0).0 - 101_325.0).abs() < 1e-9);
+        let z = US76_R0 * 11.0 / (US76_R0 / 1000.0 - 11.0);
+        let (p, t) = us76_pressure_temperature(z);
+        assert!((p - 22_632.06).abs() < 0.5, "{p}");
+        assert!((t - 216.65).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sutton_graves_matches_hand_calculation() {
+        // ρ = 1e-4 kg/m³, v = 7.5 km/s, r_n = 1 m: 1.7415e-4 · 0.01 · 4.21875e11.
+        let q = stagnation_heat_flux(BodyId::EARTH, 1e-4, 7500.0, 1.0).unwrap();
+        assert!((q - 1.7415e-4 * 0.01 * 7500.0 * 7500.0 * 7500.0).abs() < 1e-3);
+        assert!(stagnation_heat_flux(BodyId::JUPITER, 1.0, 1.0, 1.0).is_none());
     }
 
     #[test]

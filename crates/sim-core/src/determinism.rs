@@ -185,6 +185,7 @@ fn propagator_workload() -> f64 {
         thrust: 30_000.0,
         isp: 315.0,
         direction: BurnDirection::Prograde,
+        mass_flow: None,
     };
     let traj = p
         .propagate(&s0, t0.add_seconds(7_200.0), &[burn])

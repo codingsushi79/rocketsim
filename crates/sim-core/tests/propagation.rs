@@ -281,6 +281,7 @@ fn finite_burn_obeys_tsiolkovsky() {
         thrust,
         isp,
         direction: BurnDirection::Inertial(V3::new(0.0, 0.0, 1.0)),
+        mass_flow: None,
     };
     let t_end = t0().add_seconds(400.0);
     let with = p

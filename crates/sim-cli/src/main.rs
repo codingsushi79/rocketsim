@@ -378,6 +378,7 @@ fn cmd_propagate(args: &[&str]) -> Result<(), String> {
             thrust: n(f[2])?,
             isp: n(f[3])?,
             direction,
+            mass_flow: None,
         });
     }
     let clock = std::time::Instant::now();
