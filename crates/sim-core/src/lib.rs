@@ -13,6 +13,7 @@ pub mod constants;
 pub mod determinism;
 pub mod earth;
 pub mod ephemeris;
+pub mod flight;
 pub mod frames;
 pub mod gravity;
 pub mod integrator;
@@ -23,7 +24,9 @@ pub mod nrlmsise00;
 mod nrlmsise00_data;
 pub mod orientation;
 pub mod propagator;
+pub mod rcs_alloc;
 pub mod time;
+pub mod vehicle;
 
 /// Crate version, shown in the UI and embedded in save files.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
