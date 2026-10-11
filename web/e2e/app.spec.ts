@@ -1,7 +1,9 @@
 // Smoke test: main menu → mission → HUD shows a 400 km orbit; no page errors.
 import { expect, test } from "@playwright/test";
+import { mirrorConsole } from "./logging";
 
 test("main menu to LEO mission", async ({ page }) => {
+  mirrorConsole(page);
   const errors: string[] = [];
   const missing: string[] = [];
   // High-resolution textures are optional (scripts/fetch-assets.sh); their 404s are expected.

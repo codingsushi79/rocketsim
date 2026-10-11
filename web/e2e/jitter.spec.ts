@@ -1,8 +1,10 @@
 // Floating origin (spec §6): spacecraft in Saturn orbit (~1.4e12 m from the SSB),
 // camera 2 m from the hull. Consecutive frames must be identical where the hull is.
 import { expect, test } from "@playwright/test";
+import { mirrorConsole } from "./logging";
 
 test("no jitter 2 m from the spacecraft near Saturn", async ({ page }) => {
+  mirrorConsole(page);
   await page.goto("/?scene=saturn-jitter");
   await page.waitForFunction(() => window.__rocketsim?.ready === true, undefined, { timeout: 90_000 });
   expect(await page.evaluate(() => window.__rocketsim!.hudText!())).toContain("SATURN");
