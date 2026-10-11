@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/sim-core", "crates/sim-cli", "crates/sim-wasm", "tools/ephem-build"]
+# The desktop shell has its own workspace (Tauri dependencies stay out of the core).
+exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

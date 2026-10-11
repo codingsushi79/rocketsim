@@ -1,0 +1,21 @@
+[package]
+name = "rocketsim-desktop"
+version = "0.1.0"
+description = "RocketSim desktop shell (Tauri v2): hosts the web build in the system WebView"
+edition = "2024"
+publish = false
+
+# Separate from the physics workspace: Tauri's dependency tree is large and
+# platform-specific, and the core must not depend on it.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.3", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

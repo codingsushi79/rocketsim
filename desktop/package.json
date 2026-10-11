@@ -1,0 +1,13 @@
+{
+  "name": "rocketsim-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop (Windows .exe) packaging of the RocketSim web build via Tauri v2.",
+  "scripts": {
+    "tauri": "tauri",
+    "build:windows": "tauri build --bundles nsis"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.2"
+  }
+}
