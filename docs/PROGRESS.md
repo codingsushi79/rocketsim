@@ -6,8 +6,8 @@
 | 1 | Project skeleton | ✅ Done |
 | 2 | Ephemeris pipeline (DE440 + satellite SPKs, Chebyshev runtime, Horizons tests, IAU rotation, Earth EOP) | ✅ Done |
 | 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ✅ Done |
-| 4 | First render + **main menu and settings shell** (D11) | ✅ Done, awaiting review |
-| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ⏳ Next |
+| 4 | First render + **main menu and settings shell** (D11) | ✅ Done |
+| 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ✅ Done, awaiting review |
 | 6 | Map view and maneuver nodes | |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | |
 | 8 | Rest of the solar system | |
@@ -205,3 +205,85 @@
 - Spacecraft is a placeholder (M5).
 - Propagation runs on the main thread with an 8 ms budget; moving it to a Web Worker is in M10.
 - Milky Way brightness is a calibration assumption (white = 20 mag/arcsec²).
+
+## M5: v1 spacecraft (2026-10-11)
+
+Plan: `docs/plans/M5-spacecraft.md`. Vehicle rationale and numbers: `docs/spacecraft_v1.md`.
+
+**What exists**
+- **RS-1 Corvid**: 3-crew capsule + service module, 24.96 t, 3,447 m/s main-engine Δv
+  (TLI from LEO is 3.08 km/s). It is pure data in `data/vehicles/rs1_corvid.json`.
+- **Core** (`vehicle.rs`, `rcs_alloc.rs`, `flight.rs`):
+  - JSON vehicle model with validation. Mass, CoM and inertia from shape primitives
+    (parallel-axis theorem); propellant settles aft as tanks drain.
+  - 6-DOF flight on a fixed 50 Hz control grid (zero-order hold):
+    - Translation is the M3 truth propagator, with the tick's thrust as an exact-mass-flow burn.
+    - Rotation is in angular-momentum form (q, H, wheel momenta) with RK4, time-varying
+      inertia and gravity-gradient torque.
+  - Main engine:
+    - thrust and Isp with back-pressure;
+    - 40–100 % throttle, 50 ignitions, 0.4 s minimum on-time;
+    - gimbal trim through the moving CoM plus steering, rate-limited.
+  - RCS: 16 SM thrusters plus 12 CM thrusters. The CM set is inhibited until separation, as
+    on Apollo. Allocation is coupled force/torque FNNLS.
+  - Reaction wheels with torque and momentum saturation, and automatic RCS desaturation.
+  - SAS:
+    - modes Hold, pro/retro, normal/anti, radial in/out, target/anti, maneuver;
+    - eigenaxis cascade with a braking-curve rate profile, critically damped;
+    - gains scaled by the current inertia.
+  - Staging conserves momentum (separation impulse, rigid-body rates), and jettisoned stages
+    are propagated as debris.
+  - Terminal events: impact, dynamic-pressure limit, Sutton–Graves heat-flux limit.
+  - Time warp: per-tick physics up to 10×. Above that the vehicle goes "on rails" if no
+    actuator is in use (rates zeroed, as in KSP). While thrusting, the warp is capped.
+- **Web**:
+  - glTF model generated from the same JSON (CI checks it is current), with gimballing
+    engine, plume and RCS puffs driven by telemetry;
+  - debris rendering;
+  - navball with prograde/normal/radial/target markers on the local horizon;
+  - speed modes (orbit, surface, target), SAS mode bar;
+  - engine, Δv and burn-time panel, per-tank propellant gauges, wheel saturation, q/heat
+    warnings, staging (hold Space);
+  - input from keyboard (KSP-like), standard gamepads, and HOTAS with axis mapping in
+    Settings → Controls.
+
+**Verification**
+- `tests/flight.rs` (13 tests):
+  - RS-1 mass and Δv as designed;
+  - main-engine burn matches Tsiolkovsky to 1e-6, and tank bookkeeping matches the
+    propagator mass;
+  - back-pressure thrust law; ignition count and minimum on-time enforced;
+  - 30° off-axis slew settles in 16 s with **0.000 % overshoot at both full and empty mass**;
+  - torque-free tumble conserves H to 6e-11 (gravity gradient at 1 au is the residual) and
+    energy to 2e-11;
+  - wheels saturate with H exactly conserved; RCS desaturates 95 → < 5 N·m·s with < 0.5°
+    pointing excursion;
+  - RCS translation stays pure (cross-axis < 2 %, rate < 0.05°/s);
+  - staging conserves linear momentum to 1e-9 and applies the 0.6 m/s separation speed;
+  - bit-identical results for 1/60 s, 0.25 s and 10 s frame chunking.
+- Unit tests:
+  - mass properties against hand calculations; FNNLS allocation (pure torque, pure force,
+    saturation keeps direction, no opposed firing);
+  - Sutton–Graves and US76 pressure; quaternion-from-matrix round trip.
+- Playwright `e2e/flight.spec.ts`: model loads, prograde burn at 66.7 kN, RCS fires on pitch
+  input, separation leaves the CM flying and the SM as debris, with no console errors.
+- Rust: 123 tests. Canary unchanged, native = WASM = `99e74aa0dc0af768`.
+- Screenshots: `docs/screenshots/m5-*.jpg`.
+
+**Fixed along the way**
+- `extend` could loop forever when an arc's end time converted back to an epoch fell an ulp
+  short of the target. There is now 1 ns slack.
+- Auto-exposure counted the Milky Way as "lit" at high pre-exposure, blowing out sunlit
+  vehicles. The threshold is now absolute, and metering is centre-weighted.
+- MSAA sample extrapolation made the plume shader return NaN, which bloom spread over the
+  whole frame. Varyings are now clamped.
+
+**Known limitations / next**
+- No attitude-dependent aerodynamics (lift, trim, aero torque) yet, so entry is drag-only.
+- No propellant slosh, no ullage requirement, no jet damping (estimated 0.1 % of gimbal
+  authority), no power or thermal model.
+- Key rebinding is not implemented (the gamepad and HOTAS axes are configurable).
+- The physics warp limit (10×) and on-rails behaviour are game-design choices. Please
+  confirm them.
+- Plume and RCS puffs are a visual aid with a fixed radiance, not a radiometric model.
+

@@ -18,8 +18,8 @@
 //! - Torque-free motion conserves H exactly. Wheels only trade momentum with the body.
 //! - Variable mass: dH/dt = q(τ + İω)q*. Expelled propellant carries away its share of
 //!   the rigid-body angular momentum. Jet damping (the Coriolis torque of the
-//!   exhaust stream) is neglected: about 0.1% of a typical slew torque here (see
-//!   docs/spacecraft_v1.md).
+//!   exhaust stream, ≈ ṁ·l²·ω) is neglected: for the RS-1 at full thrust in a 3°/s
+//!   turn it is ~20 N·m, 0.1% of the gimbal authority (docs/spacecraft_v1.md).
 //! - External torques: thrusters about the moving centre of mass, gimballed engine,
 //!   and gravity gradient τ = 3μ/r⁵ · r_b × (I r_b) (Wie, *Space Vehicle Dynamics and
 //!   Control*, 2nd ed., §6.3). Aerodynamic torque is not modelled yet.

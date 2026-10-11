@@ -102,6 +102,13 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **Converter:** `tools/assets/prepare_stars.py`
 - **Retrieved:** 2026-10-11
 
+### RS-1 Corvid spacecraft (definition and 3D model): `data/vehicles/rs1_corvid.json`, `web/public/models/rs1_corvid.glb`
+- **Source:** original to this project. The model is generated procedurally from the JSON by
+  `tools/models/build_vehicle_glb.mjs`; no external meshes or textures.
+- **Design references (numbers only, cited in `docs/spacecraft_v1.md`):** Apollo CSM and Orion
+  public data, Aerojet R-4D and MR-104 class thrusters, Honeywell HR16-class reaction wheels.
+- **License:** same as the project.
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`
