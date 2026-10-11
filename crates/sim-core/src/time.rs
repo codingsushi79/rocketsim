@@ -116,6 +116,10 @@ pub struct Tai(Split);
 pub struct Tt(Split);
 
 impl Tai {
+    /// From whole seconds plus a fraction past 2000-01-01T12:00:00 TAI (normalized).
+    pub fn from_parts(sec: i64, frac: f64) -> Tai {
+        Tai(Split::new(sec, frac))
+    }
     pub fn seconds(self) -> f64 {
         self.0.to_f64()
     }
@@ -125,6 +129,10 @@ impl Tai {
 }
 
 impl Tt {
+    /// From whole seconds plus a fraction past J2000.0 TT (normalized).
+    pub fn from_parts(sec: i64, frac: f64) -> Tt {
+        Tt(Split::new(sec, frac))
+    }
     pub fn seconds(self) -> f64 {
         self.0.to_f64()
     }

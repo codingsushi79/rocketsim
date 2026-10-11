@@ -91,6 +91,52 @@ pub fn canary() -> u64 {
         q = (q * dq).normalized().expect("unit");
         h.v3(q.rotate(V3::new(1.0, 2.0, 3.0)));
     }
+    // Ephemeris evaluation, IAU rotation models, precise Earth orientation.
+    let mut coefs = Vec::new();
+    for k in 0..3 * 18 {
+        coefs.push(crate::ephemeris::quantize(
+            1.0e8 / f64::from(k + 1) * fmath::cos(f64::from(k)),
+            1e-3,
+        ));
+    }
+    let mut eph = crate::ephemeris::Ephemeris::new();
+    eph.insert(crate::ephemeris::Chunk {
+        target: BodyId::MOON,
+        center: BodyId::EARTH,
+        start: 0,
+        seg_len: 345_600,
+        n_seg: 1,
+        n_coef: 18,
+        quantum: 1e-3,
+        coefs,
+    })
+    .expect("valid chunk");
+    eph.insert(crate::ephemeris::Chunk {
+        target: BodyId::EARTH,
+        center: BodyId::SSB,
+        start: 0,
+        seg_len: 345_600,
+        n_seg: 1,
+        n_coef: 1,
+        quantum: 1.0,
+        coefs: vec![1.5e11, -2.0e10, 7.0e9],
+    })
+    .expect("valid chunk");
+    for k in 0..200 {
+        let t = Epoch::from_tdb_seconds(f64::from(k) * 1_728.0 + 0.123);
+        let s = eph.state_ssb(BodyId::MOON, t).expect("covered");
+        h.v3(s.r);
+        h.v3(s.v);
+        for body in crate::orientation::iau_bodies() {
+            let o = crate::orientation::iau_body_orientation(body, t.add_seconds(3.0e8))
+                .expect("model");
+            h.v3(o.icrf_to_bf.rows[0]);
+            h.v3(o.omega_bf);
+        }
+        let (o, _) = crate::earth::earth_orientation(t.add_seconds(8.0e8));
+        h.v3(o.icrf_to_bf.rows[0]);
+        h.v3(o.icrf_to_bf.rows[2]);
+    }
     let u = tdb_to_utc(e).expect("in table range");
     h.f64(u.second);
     h.f64(Epoch::J2000.add_seconds(-1.5).tdb_parts().1);
@@ -112,5 +158,5 @@ mod tests {
         assert_eq!(format!("{:016x}", canary()), GOLDEN);
     }
 
-    const GOLDEN: &str = "7b25a8236ee29aca";
+    const GOLDEN: &str = "75fbc3bb150b774d";
 }

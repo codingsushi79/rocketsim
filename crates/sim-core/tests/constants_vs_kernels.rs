@@ -3,58 +3,9 @@
 //! This catches transcription errors in the hand-written SI literals.
 
 use sim_core::constants::{Radii, gm, radii};
-use std::collections::HashMap;
 
-/// Minimal NAIF text-kernel reader: only `\begindata` sections, `NAME = ( v v v )`
-/// assignments (possibly spanning several lines), D or E exponents. `+=` appends.
-fn read_tpc(text: &str) -> HashMap<String, Vec<f64>> {
-    let mut out: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut in_data = false;
-    let mut data = String::new();
-    for line in text.lines() {
-        let t = line.trim();
-        if t == "\\begindata" {
-            in_data = true;
-            continue;
-        }
-        if t == "\\begintext" {
-            in_data = false;
-            continue;
-        }
-        if in_data {
-            data.push_str(t);
-            data.push(' ');
-        }
-    }
-    let mut rest = data.as_str();
-    while let Some(eq) = rest.find('=') {
-        let lhs = rest[..eq].trim();
-        let (name, append) = match lhs.strip_suffix('+') {
-            Some(n) => (n.trim(), true),
-            None => (lhs, false),
-        };
-        let name = name.split_whitespace().last().unwrap_or("").to_string();
-        let after = rest[eq + 1..].trim_start();
-        let (values, tail) = if let Some(body) = after.strip_prefix('(') {
-            let close = body.find(')').expect("unclosed (");
-            (&body[..close], &body[close + 1..])
-        } else {
-            let end = after.find(char::is_whitespace).unwrap_or(after.len());
-            (&after[..end], &after[end..])
-        };
-        let nums: Vec<f64> = values
-            .split(|c: char| c.is_whitespace() || c == ',')
-            .filter(|s| !s.is_empty() && !s.starts_with('\''))
-            .filter_map(|s| s.replace(['D', 'd'], "E").parse().ok())
-            .collect();
-        let e = out.entry(name).or_default();
-        if !append {
-            e.clear();
-        }
-        e.extend(nums);
-        rest = tail;
-    }
-    out
+fn read_tpc(text: &str) -> std::collections::BTreeMap<String, Vec<f64>> {
+    sim_core::naif_text_kernel::parse(text)
 }
 
 fn close(a: f64, b: f64) -> bool {

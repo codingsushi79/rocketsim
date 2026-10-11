@@ -17,6 +17,7 @@
 //! - [IAU2012B2] IAU 2012 Resolution B2 (definition of the astronomical unit).
 //! - [CGPM1901] 3rd CGPM (1901), standard acceleration of gravity.
 //! - [IAU1991A4] IAU 1991 Resolution A4 (TT − TAI = 32.184 s).
+//! - [WGS84] NGA.STND.0036 (formerly NIMA TR8350.2), *World Geodetic System 1984*.
 //! - [SI2019] BIPM, *The International System of Units*, 9th ed. (2019).
 
 // Literals keep every digit printed in the source kernel (some have 17
@@ -48,6 +49,15 @@ pub const MJD_OFFSET: f64 = 2_400_000.5;
 
 /// TT − TAI, s. Exact by definition [IAU1991A4].
 pub const TT_MINUS_TAI: f64 = 32.184;
+
+/// WGS84 reference ellipsoid [NGA.STND.0036 / TR8350.2, §3]. Earth surface positions
+/// (ground sites, Google 3D Tiles alignment) use this ellipsoid, not the IAU one.
+pub mod earth_wgs84 {
+    /// Semi-major axis, m (defining parameter).
+    pub const A: f64 = 6_378_137.0;
+    /// Flattening (defining parameter, 1/f = 298.257223563).
+    pub const F: f64 = 1.0 / 298.257_223_563;
+}
 
 /// Gravitational parameters GM, m³/s² [DE440 / gm_de440.tpc].
 ///

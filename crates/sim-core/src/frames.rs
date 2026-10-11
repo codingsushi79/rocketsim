@@ -360,17 +360,42 @@ pub struct BodyOrientation {
     pub omega_bf: V3,
 }
 
+/// IAU WGCCRE orientation angles and their rates (rad, rad/s): pole right
+/// ascension α₀, pole declination δ₀, prime meridian W.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IauAngles {
+    pub alpha0: f64,
+    pub delta0: f64,
+    pub w: f64,
+    pub alpha0_dot: f64,
+    pub delta0_dot: f64,
+    pub w_dot: f64,
+}
+
 impl BodyOrientation {
-    /// From IAU WGCCRE angles (Archinal et al. 2018, §2 and Fig. 1).
-    /// `alpha0` and `delta0` are the north pole's ICRF right ascension and
-    /// declination; `w` is the prime meridian angle; `w_dot` is its rate. Units are
-    /// rad and rad/s.
-    ///
+    /// From IAU WGCCRE angles (Archinal et al. 2018, §2 and Fig. 1):
     /// R = R3(W) · R1(π/2 − δ₀) · R3(π/2 + α₀).
     ///
-    /// Angular velocity is taken as Ẇ about the body's pole. The pole's own drift
-    /// (α̇₀, δ̇₀ ≲ 1e-11 rad/s, versus Ẇ ~ 1e-5 to 1e-4) is neglected. That causes a
-    /// velocity error below 1e-4 m/s at the surface of any v1 body.
+    /// Exact angular velocity of that composition, in body-fixed components:
+    /// ω = Ẇ ẑ + R3(W)(−δ̇₀ x̂) + R3(W) R1(π/2 − δ₀)(α̇₀ ẑ).
+    /// The pole terms matter for the Moon, whose pole librates monthly: dropping them
+    /// gives a 4e-4 relative error in ω.
+    pub fn from_iau(body: BodyId, a: &IauAngles) -> BodyOrientation {
+        use core::f64::consts::FRAC_PI_2;
+        let r3w = M3::r3(a.w);
+        let r3w_r1 = r3w.mul_m3(&M3::r1(FRAC_PI_2 - a.delta0));
+        let icrf_to_bf = r3w_r1.mul_m3(&M3::r3(FRAC_PI_2 + a.alpha0));
+        let omega_bf = V3::new(0.0, 0.0, a.w_dot)
+            + r3w.mul_v3(V3::new(-a.delta0_dot, 0.0, 0.0))
+            + r3w_r1.mul_v3(V3::new(0.0, 0.0, a.alpha0_dot));
+        BodyOrientation {
+            body,
+            icrf_to_bf,
+            omega_bf,
+        }
+    }
+
+    /// Fixed pole, uniform rotation (rates of α₀ and δ₀ zero).
     pub fn from_iau_angles(
         body: BodyId,
         alpha0: f64,
@@ -378,15 +403,17 @@ impl BodyOrientation {
         w: f64,
         w_dot: f64,
     ) -> BodyOrientation {
-        use core::f64::consts::FRAC_PI_2;
-        let icrf_to_bf = M3::r3(w)
-            .mul_m3(&M3::r1(FRAC_PI_2 - delta0))
-            .mul_m3(&M3::r3(FRAC_PI_2 + alpha0));
-        BodyOrientation {
+        BodyOrientation::from_iau(
             body,
-            icrf_to_bf,
-            omega_bf: V3::new(0.0, 0.0, w_dot),
-        }
+            &IauAngles {
+                alpha0,
+                delta0,
+                w,
+                alpha0_dot: 0.0,
+                delta0_dot: 0.0,
+                w_dot,
+            },
+        )
     }
 }
 

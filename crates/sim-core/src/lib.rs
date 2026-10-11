@@ -10,9 +10,12 @@ pub mod bodies;
 pub mod chebyshev;
 pub mod constants;
 pub mod determinism;
+pub mod earth;
 pub mod ephemeris;
 pub mod frames;
 pub mod math;
+pub mod naif_text_kernel;
+pub mod orientation;
 pub mod time;
 
 /// Crate version, shown in the UI and embedded in save files.

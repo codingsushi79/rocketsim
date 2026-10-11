@@ -17,3 +17,10 @@ Decisions confirmed with the project owner. Changing any of these needs their si
 | D9 | Repository | Private GitHub repository. No license chosen yet (all rights reserved by default). |
 | D10 | Performance target | Runs very well at **max settings on an RTX 4070-class GPU**: 1440p at ≥ 60 fps with headroom, in the worst case (LEO with Earth tiles streaming). Lower settings scale down for weaker GPUs. Development runs on an Apple M4, so final 4070 numbers have to be measured by the owner. |
 | D11 | Game polish | This is a **game**, not only a simulator. It needs a polished main menu (new game / scenario select / load / settings / credits), a full settings screen (graphics presets up to max for D10, per-feature toggles, audio volumes, controls and rebinding, units, physics tolerance options), and **volumetric clouds** (raymarched, lit by the physical atmosphere model) instead of a flat cloud layer. Schedule: the menu and settings shell come in M4 alongside the first render, so every later feature plugs its settings in as it lands. Volumetric clouds come in M7. Audio and menu polish come in M10. |
+
+## M2 (2026-10-10)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| D12 | Ephemeris fit tolerance | Positions ≤ 1 m, velocities ≤ 1 cm/s, measured after coefficient quantization. Velocity is the analytic derivative of the position fit. A 1 mm/s limit roughly tripled the short-period moon files with no physical benefit, since the kernels' own uncertainty is far larger. |
+| D13 | Uranus body center | Until a Uranus satellite kernel is approved (ura111xl-799, 1.0 GB), the Uranus body equals its barycenter. The file records this as a zero-offset chunk, and the metadata says so. |
