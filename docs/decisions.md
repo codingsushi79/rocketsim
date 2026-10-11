@@ -43,3 +43,9 @@ Decisions confirmed with the project owner. Changing any of these needs their si
 | D20 | Depth | Reversed-Z float depth when EXT_clip_control exists, logarithmic depth otherwise. Both are verified 2 m → 6e11 m by automated tests, with a standard-depth negative control. |
 | D21 | Rendering tests | Playwright on headless Chromium (SwiftShader) in CI: depth precision, floating-origin jitter near Saturn, UI smoke. Perf is measured separately on a real GPU (`PERF=1`). Final 4070 numbers need the owner's machine. |
 | D22 | Desktop packaging | Windows `.exe` via **Tauri v2** (Edge WebView2, Chromium-based like the test browser) built by `.github/workflows/package-windows.yml`. It produces an NSIS per-user installer and a portable exe. The bundle carries the 2020s and 2030s ephemeris decades, rebuilt in CI from checksum-pinned, cached JPL kernels. Owner request, 2026-10-11. |
+
+## M5 (2026-10-11)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| D23 | Time warp with a 6-DOF vehicle | Step-by-step physics (50 Hz control ticks) up to 10×. Above 10× the vehicle coasts on rails, but only while no actuator is in use: body rates are zeroed and SAS directions are held kinematically (KSP-like). While thrusting, warp is capped at 10×. Approved by the owner 2026-10-11. |
