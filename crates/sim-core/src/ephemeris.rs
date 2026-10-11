@@ -476,6 +476,7 @@ mod tests {
     use crate::math::fmath;
 
     /// Chunk of a circular orbit r(t) = R (cos ωt, sin ωt, 0), fitted like the builder does.
+    #[allow(clippy::too_many_arguments)]
     fn circular(
         quantum: f64,
         target: i32,
