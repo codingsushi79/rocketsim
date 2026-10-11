@@ -10,3 +10,4 @@ web/src/wasm/
 *.local
 .claude/*
 !.claude/launch.json
+web/public/ephemeris/

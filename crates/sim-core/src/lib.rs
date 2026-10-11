@@ -7,8 +7,10 @@
 //! - Physical constants only from [`constants`], with citations.
 
 pub mod bodies;
+pub mod chebyshev;
 pub mod constants;
 pub mod determinism;
+pub mod ephemeris;
 pub mod frames;
 pub mod math;
 pub mod time;

@@ -1,0 +1,16 @@
+[package]
+name = "ephem-build"
+description = "Offline: fit JPL SPK kernels into the .rseph Chebyshev format (build-time only, not shipped)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+sim-core.workspace = true
+# ANISE (MPL-2.0): pure-Rust SPICE kernel reader. Build-time only.
+anise = "=0.10.6"
+sha2 = "0.10"
+
+[lints]
+workspace = true
