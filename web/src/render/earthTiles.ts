@@ -101,6 +101,11 @@ class BingCredits {
   }
 }
 
+/** Linear luminance below which blue-dominant imagery counts as open ocean. */
+const OCEAN_MAX_LUM = 0.05;
+/** Camera altitude (m) above which tile ocean is cut out to show the globe's ocean. */
+const OCEAN_CUT_ALT = 30_000;
+
 export class EarthTiles {
   /** Earth-centred, body-fixed anchor (matrix set every frame). */
   readonly anchor = new THREE.Group();
@@ -110,6 +115,7 @@ export class EarthTiles {
     sunDir: { value: new THREE.Vector3(1, 0, 0) },
     sunE: { value: 1 },
     opacity: { value: 1 },
+    oceanCut: { value: 0 },
   };
   private materials = new Set<THREE.ShaderMaterial>();
   /** Current blend weight (0 = hidden, no requests). */
@@ -178,6 +184,32 @@ export class EarthTiles {
         m.roughness = 1;
         m.metalness = 0;
       }
+      // Open ocean: the aerial imagery's water is a flat dark blue, far darker than the
+      // globe's ocean (Blue Marble colour plus the GGX Sun glint) and patchy while tiles
+      // load. From high up, let the globe show through there: discard dark, blue-dominant
+      // texels after the overlay is applied. (Classification by colour, not height: ion
+      // terrain is ellipsoidal, so the sea surface sits at the geoid, ±100 m.)
+      const prev = m.onBeforeCompile;
+      const oceanCut = this.shared.oceanCut;
+      m.onBeforeCompile = (sh, r) => {
+        prev.call(m, sh, r);
+        sh.uniforms.oceanCut = oceanCut;
+        sh.fragmentShader = sh.fragmentShader
+          .replace("#include <common>", "#include <common>\nuniform float oceanCut;")
+          .replace(
+            "#include <alphamap_fragment>",
+            `#include <alphamap_fragment>
+            if (oceanCut > 0.5) {
+              vec3 oc = diffuseColor.rgb;
+              float ol = dot(oc, vec3(0.2126, 0.7152, 0.0722));
+              if (ol < OCEAN_MAX_LUM && oc.b > oc.g && oc.g >= 0.8 * oc.r) discard;
+            }`,
+          );
+      };
+      const key = m.customProgramCacheKey.bind(m);
+      m.customProgramCacheKey = () => key() + "|oceanCut";
+      m.defines = { ...(m.defines ?? {}), OCEAN_MAX_LUM: OCEAN_MAX_LUM.toFixed(4) };
+      m.needsUpdate = true;
       this.terrainMaterials.add(m);
     });
   }
@@ -239,6 +271,9 @@ export class EarthTiles {
     this.shared.sunDir.value.copy(sunDir);
     this.shared.sunE.value = sunE;
     this.shared.opacity.value = a;
+    // Below ~30 km the 2 km globe inset would show as a step at the coast: keep the
+    // imagery's water there.
+    this.shared.oceanCut.value = altitude > OCEAN_CUT_ALT ? 1 : 0;
     for (const m of this.materials) {
       m.transparent = a < 1;
     }

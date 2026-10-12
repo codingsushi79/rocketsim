@@ -74,8 +74,8 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **License:** U.S. Government work (NRL), public domain in the U.S. The C translation by D. Brodowski was **not** used: it carries no license grant.
 - **Retrieved:** 2026-10-11
 
-### Earth day texture: Blue Marble Next Generation (November 2004, topography + bathymetry)
-- **Source:** https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73884/world.topo.bathy.200411.3x5400x2700.jpg (NASA Earth Observatory / Visible Earth)
+### Earth day texture: Blue Marble Next Generation (November 2004, no relief shading or bathymetry)
+- **Source:** https://eoimages.gsfc.nasa.gov/images/imagerecords/74000/74192/world.200411.3x5400x2700.jpg (NASA Earth Observatory / Visible Earth). Replaced the topography + bathymetry variant on 2026-10-12: its shaded sea floor is not visible from orbit.
 - **Reference:** R. Stöckli et al. (2005), "The Blue Marble Next Generation: A true color earth dataset including seasonal dynamics from MODIS", NASA Earth Observatory.
 - **License:** NASA imagery, free to use. Credit "NASA Earth Observatory".
 - **Derived files:** `web/public/assets/earth_day_2048.jpg` (committed), `earth_day_5400.jpg` (`scripts/fetch-assets.sh`)

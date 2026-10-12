@@ -3,7 +3,8 @@
     python -I tools/assets/prepare_textures.py <download_dir> <out_dir> [--full]
 
 Inputs (download_dir):
-  world.topo.bathy.200411.3x5400x2700.jpg   Blue Marble NG, November 2004
+  world.200411.3x5400x2700.jpg              Blue Marble NG, November 2004 (no relief shading,
+                                            no bathymetry: the ocean looks as from orbit)
   BlackMarble_2016_3km.jpg                  Black Marble 2016 night lights (color)
   milkyway_2020_4k.exr                      NASA SVS Deep Star Maps 2020, Milky Way without stars
 Outputs (out_dir):
@@ -26,7 +27,7 @@ def save(img, name, q=90):
     img.save(f"{out}/{name}", quality=q, optimize=True, progressive=True)
     print("wrote", name, img.size)
 
-day = Image.open(f"{src}/world.topo.bathy.200411.3x5400x2700.jpg").convert("RGB")
+day = Image.open(f"{src}/world.200411.3x5400x2700.jpg").convert("RGB")
 save(day.resize((2048, 1024), Image.LANCZOS), "earth_day_2048.jpg")
 if full:
     save(day, "earth_day_5400.jpg", 92)
