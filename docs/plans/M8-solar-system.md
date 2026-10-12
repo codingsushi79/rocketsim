@@ -68,3 +68,34 @@
   token in Settings → Earth.
 - **Moon terrain from ion.** Optional: add "Cesium Moon Terrain" to the ion account from the
   Asset Depot. The PDS LOLA path above works without it.
+
+## Owner feedback, round 2 (realism and polish)
+Each item names the method; "ray-traced" means analytic rays traced in shaders or on the
+CPU (WebGL2 has no hardware ray tracing).
+- **Sun.** The disk is the physical 0.53° at 1 au; the oversized aura came from a generic
+  bloom. Replace it with an energy-conserving lens point-spread function: a small
+  scattering fraction with a power-law falloff, plus aperture diffraction spikes. The
+  Sun's visible fraction comes from rays against the body ellipsoids plus depth samples
+  across the disk (the vehicle can occlude it).
+- **Lens flare.** Ghosts are ray-traced through a real lens prescription: a double-Gauss
+  50 mm with Fresnel reflections at single-layer MgF₂ quarter-wave AR coatings, at 3
+  wavelengths with Abbe-number dispersion (Hullin et al. 2011, "Physically-Based Real-Time
+  Lens Flare Rendering", SIGGRAPH). Rays are traced on the CPU per Sun field angle and
+  cached; ghosts are drawn as aperture-shaped sprites.
+- **Brightness.** The metering protects highlights: exposure ≤ the "sunny 16" limit for
+  the local solar irradiance, so sunlit albedo-0.12 regolith reads dark grey, as in real
+  photographs.
+- **Orbit line:** map view only.
+- **Clouds.** Coverage-map edges are eroded by 3D Perlin–Worley noise (Schneider 2015,
+  "The Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"), so edges are soft and
+  billowed rather than texel polygons.
+- **Re-entry.** A shock-layer glow scaled by the core's stagnation heat flux, ablation
+  sparks, a plasma light on the vehicle, and buffeting.
+- **Ring particles.** Within a few km of the ring plane, individual instanced rocks appear:
+  - sizes from a power law n(a) ∝ a⁻³, 1 cm to 10 m (Zebker et al. 1985; Cuzzi et al.
+    2009), with number density matched to the local optical depth;
+  - in a co-rotating Keplerian frame; the ring texture fades out as they fade in.
+- **Interior.** An RS-1 crew-module interior for the cockpit camera: seats, panels, live
+  canvas displays, windows and cabin lighting.
+- **UI.** A sober avionics look: square corners, thin rules, a bundled font, less chrome.
+- **Release.** The CI release carries the Windows .exe.
