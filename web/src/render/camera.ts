@@ -60,6 +60,13 @@ export class OrbitCamera {
     }
   }
 
+  /** Keyboard/gamepad camera: rotate by (dYaw, dPitch) rad and zoom by a factor. */
+  nudge(dYaw: number, dPitch: number, zoom: number): void {
+    this.targetYaw += dYaw;
+    this.targetPitch = Math.max(-1.55, Math.min(1.55, this.targetPitch + dPitch));
+    this.targetDistance = Math.max(this.minDistance, Math.min(this.maxDistance, this.targetDistance * zoom));
+  }
+
   /** Rotate around the focus (e.g. the menu's idle spin). */
   spin(dYaw: number): void {
     this.targetYaw += dYaw;

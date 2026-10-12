@@ -16,7 +16,9 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
 #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 #ui { position: fixed; inset: 0; pointer-events: none; }
-#ui > * { pointer-events: auto; }
+/* Zero specificity, so full-screen layers (.hud, .map-overlay) can opt out and let
+   drags and the wheel reach the canvas (camera). */
+:where(#ui > *) { pointer-events: auto; }
 .hidden { display: none !important; }
 .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
 
@@ -173,3 +175,11 @@ td.key { width: 140px; color: var(--accent-2); font-family: ui-monospace, monosp
 .ground-track { position: absolute; left: 12px; top: calc(80px * var(--hud-scale)); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; backdrop-filter: blur(6px); }
 .ground-track canvas { display: block; width: calc(384px * var(--hud-scale)); height: calc(192px * var(--hud-scale)); border-radius: 4px; }
 .hud.map-mode .hud-navball, .hud.map-mode .hud-prop, .hud.map-mode .hud-sas { display: none; }
+
+/* Google Maps attribution (M7): bottom strip, nothing overlaps it. */
+.google-attrib { position: absolute; left: 0; right: 0; bottom: 0; height: 34px; display: flex; align-items: center; gap: 14px; padding: 0 12px; background: linear-gradient(0deg, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0)); pointer-events: none; font-size: 11.5px; color: #e8eef8; text-shadow: 0 0 3px #000; z-index: 20; }
+.google-logo { height: 18px; width: auto; margin: 10px 10px 5px 10px; flex: none; }
+.google-data { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.google-hybrid { margin-left: auto; color: #b9c4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud.attrib-on .hud-orbit, .hud.attrib-on .hud-prop, .hud.attrib-on .hud-navball, .hud.attrib-on .hud-debug { bottom: 46px; }
+.key-input { font: inherit; color: var(--text); background: #111a2a; border: 1px solid var(--line); border-radius: 5px; padding: 0.3em 0.5em; width: 100%; font-family: ui-monospace, monospace; }
