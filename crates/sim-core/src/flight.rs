@@ -558,6 +558,7 @@ impl Flight {
         p.integrator = base.integrator;
         p.center_switching = base.center_switching;
         p.exact_horizon = exact;
+        p.terrain = base.terrain;
         p.ballistic = Ballistic {
             cd: aero.cd,
             drag_area: aero.drag_area,

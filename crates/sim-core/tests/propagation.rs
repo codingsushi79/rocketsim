@@ -537,3 +537,44 @@ fn pruning_history_does_not_change_the_future() {
         full.step_count()
     );
 }
+
+#[test]
+fn impact_happens_on_the_terrain_surface() {
+    use sim_core::terrain::{HeightGrid, Terrain};
+    let (e, reg) = (eph(), BodyRegistry::builtin());
+    // A uniform 5 km plateau over the whole Moon.
+    let (w, h) = (16usize, 8usize);
+    let mut b = b"RSDEM1".to_vec();
+    b.extend((w as u32).to_le_bytes());
+    b.extend((h as u32).to_le_bytes());
+    b.extend(1.0f32.to_le_bytes());
+    for _ in 0..w * h {
+        b.extend(5000i16.to_le_bytes());
+    }
+    let mut terrain = Terrain::default();
+    terrain.insert(BodyId::MOON, HeightGrid::from_bytes(&b).unwrap());
+    let mut p = two_body(&e, &reg);
+    p.terrain = Some(&terrain);
+    let r_moon = reg.get(BodyId::MOON).unwrap().radii.a;
+    // Fall straight down from 100 km.
+    let s0 = ScState {
+        epoch: t0(),
+        state: State::new(
+            V3::new(r_moon + 100e3, 0.0, 0.0),
+            V3::ZERO,
+            IcrfBody {
+                center: BodyId::MOON,
+            },
+        ),
+        mass: 1000.0,
+    };
+    let traj = p.propagate(&s0, t0().add_seconds(3600.0), &[]).unwrap();
+    assert!(matches!(traj.terminated(), Some(ArcEnd::Impact { .. })));
+    let r = traj.end_state().state.r.norm();
+    eprintln!("impact at {:.3} m above the sphere", r - r_moon);
+    assert!((r - r_moon - 5000.0).abs() < 1.0, "{}", r - r_moon);
+    // Without terrain the ground is the reference sphere.
+    p.terrain = None;
+    let traj = p.propagate(&s0, t0().add_seconds(3600.0), &[]).unwrap();
+    assert!((traj.end_state().state.r.norm() - r_moon).abs() < 1.0);
+}

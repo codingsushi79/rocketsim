@@ -13,6 +13,7 @@ import { FlightInput } from "./ui/input";
 import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
+import { loadHeightGrid, type HeightGrid } from "./render/planetSurface";
 import { EarthTiles } from "./render/earthTiles";
 import { SurfaceAttribution } from "./ui/attribution";
 import { surfaceSource } from "./settings";
@@ -68,16 +69,32 @@ async function loadAssets(quality: "standard" | "high", status: (s: string) => v
     return loadTexture(std);
   };
   status("Loading textures…");
-  const [day, night, milkyWay, water, clouds] = await Promise.all([
+  status("Loading terrain…");
+  const terrain = new Map<number, HeightGrid>();
+  const terrainBytes = new Map<number, Uint8Array>();
+  await Promise.all(
+    ([[399, "earth"], [301, "moon"], [499, "mars"]] as const).map(async ([id, name]) => {
+      try {
+        const { grid, bytes } = await loadHeightGrid(`terrain/${name}.rsdem`);
+        terrain.set(id, grid);
+        terrainBytes.set(id, bytes);
+      } catch (e) {
+        console.warn(`terrain ${name}: ${String(e)}`);
+      }
+    }),
+  );
+  const [day, night, milkyWay, water, clouds, moon, mars] = await Promise.all([
     pick("assets/earth_day_5400.jpg", "assets/earth_day_2048.jpg"),
     pick("assets/earth_night_8192.jpg", "assets/earth_night_2048.jpg"),
     pick("assets/milkyway_4096.jpg", "assets/milkyway_2048.jpg"),
     pick("assets/earth_water_4096.png", "assets/earth_water_2048.png"),
     pick("assets/earth_clouds_8192.jpg", "assets/earth_clouds_2048.jpg"),
+    loadTexture("assets/moon_2048.jpg"),
+    loadTexture("assets/mars_2048.jpg"),
   ]);
   status("Loading star catalog…");
   const stars = await loadStars("assets/stars_hip_v8.bin");
-  return { day, night, milkyWay, water, clouds, stars };
+  return { day, night, milkyWay, water, clouds, moon, mars, terrain, terrainBytes, stars };
 }
 
 function makeTestHooks(engine: Engine, step: (dt: number) => void): TestHooks {
@@ -204,6 +221,8 @@ async function main(): Promise<void> {
   const scenario: Scenario = testScene === "saturn-jitter" ? SATURN_TEST : SCENARIOS[0]!;
   await sim.loadEphemeris(scenario.epochUtc, (m) => (status.textContent = m));
   const assets = await loadAssets(settings.graphics.textureQuality, (m) => (status.textContent = m));
+  // The same height grids drive ground contact in the physics core.
+  for (const [id, bytes] of assets.terrainBytes) sim.sim.loadTerrain(id, bytes);
   sim.start(scenario, settings.sim);
   const world = new World(engine, sim, bodies, assets, settings);
   engine.clouds = new CloudPass(assets.clouds);

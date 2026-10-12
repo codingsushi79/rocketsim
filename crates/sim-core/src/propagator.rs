@@ -625,6 +625,8 @@ pub struct Propagator<'a> {
     /// step end. Step-by-step flight (fixed control ticks) needs this; on-rails coasting
     /// leaves it off so chunked propagation stays bit-identical.
     pub exact_horizon: bool,
+    /// Height grids for ground contact; without one, the reference ellipsoid is the ground.
+    pub terrain: Option<&'a crate::terrain::Terrain>,
 }
 
 impl<'a> Propagator<'a> {
@@ -637,6 +639,7 @@ impl<'a> Propagator<'a> {
             ballistic: Ballistic::default(),
             center_switching: true,
             exact_horizon: false,
+            terrain: None,
         }
     }
 
@@ -851,8 +854,23 @@ impl<'a> Propagator<'a> {
                 if resolved { -g } else { g }
             }
             Event::Impact => {
-                // Inside the reference ellipsoid ⇔ (x² + y²)/a² + z²/c² < 1 (body-fixed).
                 let i = self.reg.get(m.center).map(|b| b.radii);
+                // With a height grid: below the terrain surface (reference surface + grid
+                // height; geodetic for Earth, radial for the others).
+                if let (Some(tr), Some(rad), Some(o)) = (self.terrain, i, m.orientation(t))
+                    && tr.get(m.center).is_some()
+                {
+                    let p = o.icrf_to_bf.mul_v3(r);
+                    return Ok(if m.center == BodyId::EARTH {
+                        let (lat, lon, h) = earth::itrs_to_geodetic(p);
+                        tr.grid_height(m.center, lat, lon) - h
+                    } else {
+                        let q = V3::new(p.x / rad.a, p.y / rad.b, p.z / rad.c).norm();
+                        let rn = p.norm();
+                        (rn / q + tr.height_at(m.center, p)) - rn
+                    });
+                }
+                // Inside the reference ellipsoid ⇔ (x² + y²)/a² + z²/c² < 1 (body-fixed).
                 match (i, m.orientation(t)) {
                     (Some(rad), Some(o)) => {
                         let p = o.icrf_to_bf.mul_v3(r);

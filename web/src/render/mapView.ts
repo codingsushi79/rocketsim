@@ -384,7 +384,7 @@ export class MapView {
         continue;
       }
       const v = new THREE.Vector3(p[0]! - f.cam[0], p[1]! - f.cam[1], p[2]! - f.cam[2]);
-      const sc = this.screen(v);
+      const sc = this.occluded(v, b.id) ? null : this.screen(v);
       const big = b.radii[0] / v.length() > 6 * rpp;
       if (!sc) {
         lab.style.display = "none";
@@ -400,6 +400,25 @@ export class MapView {
 
     this.drawMarkers();
     this.drawNodes();
+  }
+
+  /** True if a body nearer than `v` (render space) hides it: tested against the focus
+   *  and centre bodies, the only ones large enough on screen to matter. */
+  private occluded(v: THREE.Vector3, id: number): boolean {
+    const f = this.world.frame;
+    const d = v.length();
+    const dir = v.clone().divideScalar(d);
+    for (const occ of new Set([this.world.focus, this.world.centerId])) {
+      if (occ === id || occ < 0) continue;
+      const row = this.bodies.find((b) => b.id === occ);
+      const p = occ === this.world.centerId ? [0, 0, 0] : f.rel.get(occ);
+      if (!row || !p) continue;
+      const c = new THREE.Vector3(p[0]! - f.cam[0], p[1]! - f.cam[1], p[2]! - f.cam[2]);
+      const t = c.dot(dir);
+      if (t <= 0 || t >= d) continue;
+      if (c.clone().sub(dir.clone().multiplyScalar(t)).length() < row.radii[0]) return true;
+    }
+    return false;
   }
 
   private bodyName(id: number): string {

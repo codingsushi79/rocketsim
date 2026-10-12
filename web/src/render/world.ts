@@ -13,6 +13,26 @@ import { placeholderSpacecraft } from "./placeholder";
 import type { VehicleView } from "./spacecraft";
 import { PRE_EXPOSURE } from "./units";
 import type { EarthTiles } from "./earthTiles";
+import { PlanetSurface, type HeightGrid } from "./planetSurface";
+
+/** Bodies with a terrain surface: imagery layer (NASA Trek WMTS) and base texture key. */
+const SURFACES: Record<number, { url: string; maxLevel: number; gain: number; attribution: string; base: "moon" | "mars" }> = {
+  301: {
+    url: "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+    maxLevel: 8,
+    // WAC mosaic: mean linear value ≈ 0.35 for a mean normal albedo ≈ 0.12 (Moon).
+    gain: 0.35,
+    attribution: "Moon imagery: NASA/GSFC/Arizona State University (LRO WAC) via NASA Trek · topography: LRO LOLA (NASA/GSFC)",
+    base: "moon",
+  },
+  499: {
+    url: "https://trek.nasa.gov/tiles/Mars/EQ/Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+    maxLevel: 7,
+    gain: 0.9,
+    attribution: "Mars imagery: NASA/JPL/USGS (Viking MDIM 2.1) via NASA Trek · topography: MGS MOLA (NASA/GSFC)",
+    base: "mars",
+  },
+};
 
 const AU = 149_597_870_700;
 const SUN = 10;
@@ -24,6 +44,11 @@ export interface WorldAssets {
   day: THREE.Texture;
   night: THREE.Texture;
   milkyWay: THREE.Texture;
+  moon: THREE.Texture;
+  mars: THREE.Texture;
+  /** Height grids by body (shared with the physics core). */
+  terrain: Map<number, HeightGrid>;
+  terrainBytes: Map<number, Uint8Array>;
   water: THREE.Texture;
   clouds: THREE.Texture;
   stars: Awaited<ReturnType<typeof import("./sky").loadStars>>;
@@ -82,6 +107,15 @@ export class World {
       let view: BodyEntry["view"];
       if (row.id === SUN) view = new SunView(a);
       else if (row.id === EARTH) view = new EarthView(assets.day, assets.night, assets.water, assets.clouds, a, c, seg);
+      else if (SURFACES[row.id]) {
+        const def = SURFACES[row.id]!;
+        const surf = new PlanetSurface([a, b, c], assets.terrain.get(row.id) ?? null, def, assets[def.base], () => engine.radiansPerPixel);
+        this.surfaces.set(row.id, surf);
+        engine.scene.add(surf.anchor);
+        // A stand-in "view" with an empty mesh, so the rest of the loop is unchanged.
+        view = new PlainBody(1, 1, 1, new THREE.Color(0, 0, 0), 8);
+        view.mesh.visible = false;
+      }
       else {
         const t = BODY_TINT[row.id] ?? [0.3, 0.3, 0.3];
         view = new PlainBody(a, b, c, new THREE.Color(t[0], t[1], t[2]), Math.max(32, seg / 2));
@@ -195,6 +229,7 @@ export class World {
       const p = sub(r, cam);
       e.pos.set(p[0], p[1], p[2]);
       e.view.mesh.position.copy(e.pos);
+      if (this.surfaces.has(id)) e.view.mesh.visible = false;
       const frame = s.bodyFrame(id);
       if (frame.length === 9 && id === EARTH) {
         this.earthFixed.set(frame[0]!, frame[1]!, frame[2]!, frame[3]!, frame[4]!, frame[5]!, frame[6]!, frame[7]!, frame[8]!);
@@ -312,6 +347,20 @@ export class World {
     c.updateProjectionMatrix();
     c.updateMatrixWorld();
 
+    // Terrain surfaces need the final camera (frustum, distance).
+    for (const [id, surf] of this.surfaces) {
+      const e = this.bodies.get(id);
+      const f = s.bodyFrame(id);
+      const r = rel.get(id);
+      if (!e || !r || f.length !== 9) {
+        surf.anchor.visible = false;
+        continue;
+      }
+      surf.anchor.visible = true;
+      const toSun = sub(sunRel, r);
+      surf.update(e.pos, f, vec(toSun).normalize(), (AU / len(toSun)) ** 2, c);
+    }
+
     this.stars.update(rpp, this.settings.ui.starBoost);
     this.milkyWay.setBoost(this.settings.ui.starBoost);
 
@@ -344,6 +393,8 @@ export class World {
   /** ICRF → Earth body-fixed (row-major from the core), refreshed per frame. */
   private earthFixed = new THREE.Matrix3();
   private earthFrameRows: number[] = [];
+  /** Terrain surfaces (Moon, Mars): updated after the camera is placed. */
+  private surfaces = new Map<number, PlanetSurface>();
   /** Google 3D tiles (when a key is configured and enabled). */
   tiles: EarthTiles | null = null;
 }

@@ -117,6 +117,7 @@ pub struct Sim {
     plan_dirty: bool,
     /// The burn being executed by the autopilot and the plan it came from.
     execution: Option<Execution>,
+    terrain: sim_core::terrain::Terrain,
     /// Why on-rails warp stopped early ("" if it didn't): "autopilot" or "atmosphere".
     warp_stopped: &'static str,
     debris: Vec<(Debris, Trajectory)>,
@@ -154,9 +155,24 @@ impl Sim {
             plan_pred: None,
             plan_dirty: false,
             execution: None,
+            terrain: sim_core::terrain::Terrain::default(),
             warp_stopped: "",
             debris: Vec::new(),
         }
+    }
+
+    /// Height grid for `body` (decompressed `.rsdem`), used for ground contact.
+    #[wasm_bindgen(js_name = loadTerrain)]
+    pub fn load_terrain(&mut self, body: i32, bytes: &[u8]) -> Result<(), JsError> {
+        let g = sim_core::terrain::HeightGrid::from_bytes(bytes).map_err(js_err)?;
+        self.terrain.insert(BodyId(body), g);
+        Ok(())
+    }
+
+    /// Terrain height (m above the reference surface) at body-fixed lat/lon (rad).
+    #[wasm_bindgen(js_name = terrainHeight)]
+    pub fn terrain_height(&self, body: i32, lat: f64, lon: f64) -> f64 {
+        self.terrain.grid_height(BodyId(body), lat, lon)
     }
 
     /// Merge a `.rseph` file.
@@ -648,6 +664,7 @@ impl Sim {
         p.forces = self.forces;
         p.integrator = self.integrator;
         p.ballistic = self.ballistic;
+        p.terrain = Some(&self.terrain);
         p
     }
 

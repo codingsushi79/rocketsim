@@ -27,6 +27,7 @@ pub mod orientation;
 pub mod prediction;
 pub mod propagator;
 pub mod rcs_alloc;
+pub mod terrain;
 pub mod time;
 pub mod vehicle;
 
