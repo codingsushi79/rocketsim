@@ -54,6 +54,9 @@ jobs:
         run: |
           node tools/models/build_vehicle_glb.mjs data/vehicles/rs1_corvid.json web/public/models/rs1_corvid.glb
           git diff --exit-code -- web/public/models
+      - name: Renderer unit tests (lens optics, incandescence)
+        run: npm run test:unit
+        working-directory: web
       - run: npm run build
         working-directory: web
 

@@ -10,7 +10,7 @@
 | 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ✅ Done |
 | 6 | Map view and maneuver nodes | ✅ Done |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | ✅ Done, awaiting review (real-key check pending) |
-| 8 | Rest of the solar system | |
+| 8 | Rest of the solar system (+ owner polish round: Sun/lens, clouds, entry, rings, cockpit, UI) | ✅ Done, awaiting review |
 | 9 | Transfer planner (Lambert, porkchop, n-body correction) | |
 | 10 | Polish (save/load/replay, audio, menu polish, performance) | |
 
@@ -437,3 +437,75 @@ Plan, including the policy summary: `docs/plans/M7-earth-photorealism.md`.
 - Tile lighting uses the local vertical, since the imagery has baked shading. At low sun the
   photogrammetry's own shadows remain.
 
+
+## M8: rest of the solar system, and realism polish (2026-10-12)
+
+Plan, with the owner's two feedback rounds: `docs/plans/M8-solar-system.md`.
+
+**What exists**
+- **Surfaces:**
+  - Moon and Mars terrain: LOLA and MOLA height grids drive both rendering and ground
+    contact;
+  - Earth: Cesium ion World Terrain with Bing imagery;
+  - 16 bodies with NASA Trek imagery, albedo-calibrated;
+  - Jupiter (Cassini PIA07782); Saturn, Uranus and Neptune (Solar System Scope, CC BY 4.0);
+  - Pluto (New Horizons, USGS);
+  - Venus as its cloud deck at 70 km, and Titan as its haze at ~100 km.
+- **Saturn's rings:**
+  - an NSSDC radial profile, lit with single-scattering slab brightness on both faces;
+  - shadows both ways (planet on rings, rings on planet);
+  - individual rocks near the camera: n(a) ∝ a⁻³, density from the local τ, Keplerian shear;
+  - the sheet keeps only the unresolved cross-section;
+  - a high-precision patch under the camera.
+  - New mission: inside Saturn's rings.
+- **Sun and lens:**
+  - the solar disk at its physical size;
+  - energy-conserving veiling glare (2 %) replaces the additive bloom;
+  - aperture diffraction spikes from the edge-diffraction asymptote;
+  - lens ghosts ray-traced through a double-Gauss 50 mm with MgF₂ coatings at 3 wavelengths
+    (Hullin et al. 2011);
+  - Sun visibility measured from the HDR frame.
+- **Exposure:** capped at sunny 16 in sunlit scenes, so planets are no longer metered up to
+  mid-grey. In the cockpit the exposure adapts to the cabin like an eye.
+- **Clouds:**
+  - a broken-cloud model: cover fraction R/0.57, placed by noise quantiles;
+  - bicubic coverage, scale-aware billows;
+  - lighting calibrated to two-stream, which fixes thick clouds being ~3× too dark.
+  - Day map without bathymetry, and no dark tile ocean from orbit.
+- **Entry:**
+  - incandescence from radiative equilibrium with Planck × CIE colour;
+  - shock-layer sheath and wake (a visual aid), plasma light, buffeting.
+- **Cameras:** chase, free, locked, cockpit, body-locked, surface (C), smoothed.
+- **Cockpit interior** from vehicle data:
+  - windows, couches, console, and three live displays;
+  - cabin lighting in physical units;
+  - sunlight through the windows, with shadows.
+- **UI:** avionics restyle with bundled IBM Plex. The orbit line is shown in the map view
+  only.
+
+**Verification**
+- `cargo test --workspace`, including new terrain tests against published extremes. Measured
+  on the 8 px/deg grids:
+
+| Feature | Measured |
+|---|---|
+| Olympus Mons | 21,102 m |
+| Hellas floor | −7,850 m |
+| Lunar high point | 10,459 m |
+| Antoniadi crater | −8,681 m |
+
+- `npm run test:unit` (8 tests):
+  - lens EFL 50.35 mm;
+  - Fresnel and coating minimum exact;
+  - dispersion;
+  - a 5772 K black body reproduces the solar disk to the IAU nominal-constant consistency
+    (3e-4).
+- Playwright: 12 passing, including the camera-modes test.
+- Screenshots: `docs/screenshots/m8-*.jpg`.
+
+**Known limitations / next**
+- Ring particles are not obstacles (no collisions). Saturn, Uranus and Neptune maps are
+  artist composites, because there are no public global maps.
+- The shock-layer glow is not a radiation model. Lens ghosts use a 32×32 ray grid (slight
+  faceting at caustics).
+- Cockpit: only the RS-1 has a cabin; earthshine is off inside (it has no shadow map).
