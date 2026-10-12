@@ -11,6 +11,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import type { DepthMode, GraphicsSettings } from "../settings";
 import { EXPOSURE_MAX, EXPOSURE_MIN, PRE_EXPOSURE } from "./units";
 import { AtmospherePass, type AtmosphereParams } from "./atmosphere";
+import type { CloudPass, CloudSettings } from "./clouds";
 import { QUAD_VS } from "./glsl";
 
 export type ActiveDepth = "reversed" | "log" | "standard";
@@ -24,6 +25,10 @@ export class Engine {
   readonly scene = new THREE.Scene();
   readonly depth: ActiveDepth;
   readonly atmosphere: AtmospherePass;
+  /** Volumetric clouds (set once the coverage texture is loaded). */
+  clouds: CloudPass | null = null;
+  cloudSettings: CloudSettings = { steps: 48, lightSteps: 5 };
+  private cloudRT!: THREE.WebGLRenderTarget;
   /** Current exposure as a GPU texture (r = exposure, g = metered mean luminance), for
    *  overlays that must keep a fixed display brightness (orbit lines, markers). */
   readonly exposureUniform: { value: THREE.Texture | null } = { value: null };
@@ -198,6 +203,8 @@ export class Engine {
       samples: this.settings.msaa,
     });
     this.composited = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.cloudRT?.dispose();
+    this.cloudRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
     this.exposed = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
     this.bloom?.setSize(w, h);
   }
@@ -253,7 +260,15 @@ export class Engine {
     r.render(this.scene, this.camera);
 
     // 2. Atmosphere: in-scattering and transmittance along each pixel ray.
-    this.atmosphere.render(r, this.hdr, this.composited, this.camera, this.depth, atmo, this.settings.atmosphereSteps);
+    let clouds: THREE.Texture | null = null;
+    const cs = this.settings.cloudSteps ?? 48;
+    this.cloudSettings = { steps: cs, lightSteps: cs <= 32 ? 3 : cs <= 64 ? 5 : 6 };
+    if (atmo && atmo.toBodyFixed && this.clouds && cs > 0) {
+      const luts = this.atmosphere.luts(r, atmo);
+      this.clouds.render(r, this.hdr, this.cloudRT, this.camera, this.depth, atmo, luts, atmo.toBodyFixed, this.cloudSettings);
+      clouds = this.cloudRT.texture;
+    }
+    this.atmosphere.render(r, this.hdr, this.composited, this.camera, this.depth, atmo, this.settings.atmosphereSteps, clouds);
 
     // 3. Auto-exposure: mean luminance → adapted exposure (GPU only, no readback).
     (this.lumQuad.material as THREE.ShaderMaterial).uniforms.src!.value = this.composited.texture;

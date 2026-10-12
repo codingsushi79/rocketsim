@@ -12,6 +12,7 @@ import { Hud, TARGET_CYCLE } from "./ui/hud";
 import { FlightInput } from "./ui/input";
 import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
+import { CloudPass } from "./render/clouds";
 import { h } from "./ui/dom";
 
 const params = new URLSearchParams(location.search);
@@ -63,14 +64,16 @@ async function loadAssets(quality: "standard" | "high", status: (s: string) => v
     return loadTexture(std);
   };
   status("Loading textures…");
-  const [day, night, milkyWay] = await Promise.all([
+  const [day, night, milkyWay, water, clouds] = await Promise.all([
     pick("assets/earth_day_5400.jpg", "assets/earth_day_2048.jpg"),
     pick("assets/earth_night_8192.jpg", "assets/earth_night_2048.jpg"),
     pick("assets/milkyway_4096.jpg", "assets/milkyway_2048.jpg"),
+    pick("assets/earth_water_4096.png", "assets/earth_water_2048.png"),
+    pick("assets/earth_clouds_8192.jpg", "assets/earth_clouds_2048.jpg"),
   ]);
   status("Loading star catalog…");
   const stars = await loadStars("assets/stars_hip_v8.bin");
-  return { day, night, milkyWay, stars };
+  return { day, night, milkyWay, water, clouds, stars };
 }
 
 function makeTestHooks(engine: Engine, step: (dt: number) => void): TestHooks {
@@ -199,6 +202,7 @@ async function main(): Promise<void> {
   const assets = await loadAssets(settings.graphics.textureQuality, (m) => (status.textContent = m));
   sim.start(scenario, settings.sim);
   const world = new World(engine, sim, bodies, assets, settings);
+  engine.clouds = new CloudPass(assets.clouds);
   // Vehicle models, loaded once per definition.
   const vehicleViews = new Map<string, VehicleView>();
   const useVehicle = async (sc: Scenario) => {

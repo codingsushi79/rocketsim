@@ -20,6 +20,8 @@ export interface GraphicsSettings {
   depthMode: DepthMode;
   /** Sphere segments for bodies (detail). */
   bodySegments: number;
+  /** Volumetric cloud ray-march steps (0 = off). */
+  cloudSteps: number;
 }
 
 export interface SimSettings {
@@ -78,10 +80,10 @@ export interface Settings {
 }
 
 export const GRAPHICS_PRESETS: Record<Exclude<Preset, "custom">, Omit<GraphicsSettings, "preset" | "depthMode">> = {
-  low: { renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6.0, textureQuality: "standard", bodySegments: 64 },
-  medium: { renderScale: 1.0, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7.0, textureQuality: "standard", bodySegments: 128 },
-  high: { renderScale: 1.0, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8.0, textureQuality: "high", bodySegments: 192 },
-  max: { renderScale: 1.0, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8.0, textureQuality: "high", bodySegments: 256 },
+  low: { renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6.0, textureQuality: "standard", bodySegments: 64, cloudSteps: 0 },
+  medium: { renderScale: 1.0, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7.0, textureQuality: "standard", bodySegments: 128, cloudSteps: 32 },
+  high: { renderScale: 1.0, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8.0, textureQuality: "high", bodySegments: 192, cloudSteps: 64 },
+  max: { renderScale: 1.0, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8.0, textureQuality: "high", bodySegments: 256, cloudSteps: 128 },
 };
 
 export function defaultSettings(): Settings {

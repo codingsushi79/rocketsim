@@ -57,42 +57,95 @@ const COMMON_VS = /* glsl */ `
  *  sunlit land, i.e. ~1e-6 of daylight. */
 const NIGHT_LIGHTS_U = 2e-6;
 
-/** Earth: Blue Marble day albedo, Black Marble night lights. */
+/** Ocean surface roughness for the glint: GGX α ≈ the RMS slope of Cox & Munk (1954)
+ *  for ~5 m/s wind, σ² ≈ 0.003 + 5.12e-3·U ≈ 0.029 → α ≈ 0.17. */
+const OCEAN_ALPHA = 0.17;
+/** Water's normal-incidence Fresnel reflectance (n ≈ 1.33): ((n−1)/(n+1))² ≈ 0.02. */
+const WATER_F0 = 0.02;
+
+/** Earth: Blue Marble day albedo, Black Marble night lights, ocean glint (Natural Earth
+ *  water mask, GGX + Schlick), and shadows of the cloud layer (Blue Marble clouds). */
 export class EarthView {
   readonly mesh: THREE.Mesh;
   private mat: THREE.ShaderMaterial;
 
-  constructor(day: THREE.Texture, night: THREE.Texture, a: number, c: number, segments: number) {
+  constructor(day: THREE.Texture, night: THREE.Texture, water: THREE.Texture, clouds: THREE.Texture, a: number, c: number, segments: number) {
     for (const t of [day, night]) {
       t.colorSpace = THREE.SRGBColorSpace;
       t.anisotropy = 8;
       t.generateMipmaps = true;
       t.minFilter = THREE.LinearMipmapLinearFilter;
     }
+    for (const t of [water, clouds]) {
+      t.colorSpace = THREE.NoColorSpace;
+      t.anisotropy = 8;
+    }
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
         dayMap: { value: day },
         nightMap: { value: night },
+        waterMap: { value: water },
+        cloudMap: { value: clouds },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         sunE: { value: 1 },
         nightScale: { value: NIGHT_LIGHTS_U },
+        cloudShadows: { value: 1 },
         preExposure: PRE_EXPOSURE,
+        /** Radius scale: pulled 2 km inward while 3D tiles cover the surface. */
+        inset: { value: 1 },
       },
-      vertexShader: COMMON_VS,
+      vertexShader: /* glsl */ `
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        uniform float inset;
+        varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vViewW;
+        void main() {
+          vUv = uv;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          vec4 wp = modelMatrix * vec4(position * inset, 1.0);
+          vViewW = cameraPosition - wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+          #include <logdepthbuf_vertex>
+        }`,
       fragmentShader: /* glsl */ `
         #include <common>
         #include <logdepthbuf_pars_fragment>
-        uniform sampler2D dayMap, nightMap;
+        uniform sampler2D dayMap, nightMap, waterMap, cloudMap;
         uniform vec3 sunDir;
-        uniform float sunE, nightScale, preExposure;
+        uniform float sunE, nightScale, preExposure, cloudShadows;
         varying vec2 vUv;
         varying vec3 vNormalW;
+        varying vec3 vViewW;
+        const float ALPHA = ${OCEAN_ALPHA.toFixed(4)};
+        const float F0 = ${WATER_F0.toFixed(4)};
         void main() {
           #include <logdepthbuf_fragment>
-          float ndl = dot(normalize(vNormalW), sunDir);
+          vec3 n = normalize(vNormalW);
+          vec3 v = normalize(vViewW);
+          float ndl = dot(n, sunDir);
           vec3 albedo = texture2D(dayMap, vUv).rgb;
-          vec3 day = albedo * sunE * max(ndl, 0.0);
-          vec3 lights = texture2D(nightMap, vUv).rgb * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl));
+          float water = texture2D(waterMap, vUv).r;
+          // Cloud shadow: coverage sampled toward the Sun (cloud deck ~3 km up).
+          float cov = smoothstep(0.12, 0.8, texture2D(cloudMap, vUv).r);
+          float shadow = 1.0 - cloudShadows * 0.75 * cov;
+          vec3 day = albedo * sunE * max(ndl, 0.0) * shadow;
+          // Specular glint: L = π·f·E·cosθ in U (units.ts), f = D·F·G/(4 n·l n·v).
+          if (water > 0.01 && ndl > 0.0) {
+            vec3 h = normalize(sunDir + v);
+            float ndh = max(dot(n, h), 0.0);
+            float ndv = max(dot(n, v), 1e-4);
+            float a2 = ALPHA * ALPHA;
+            float dd = ndh * ndh * (a2 - 1.0) + 1.0;
+            float D = a2 / (PI * dd * dd);
+            float k = ALPHA * 0.5;
+            float G = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+            float F = F0 + (1.0 - F0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+            float spec = D * F * G / (4.0 * ndl * ndv);
+            day += vec3(PI * spec * sunE * ndl) * water * shadow;
+          }
+          vec3 lights = texture2D(nightMap, vUv).rgb * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
           gl_FragColor = vec4((day + lights) * preExposure, 1.0);
         }`,
     });
@@ -103,6 +156,11 @@ export class EarthView {
   setSun(dir: THREE.Vector3, irradiance: number): void {
     this.mat.uniforms.sunDir!.value.copy(dir);
     this.mat.uniforms.sunE!.value = irradiance;
+  }
+
+  /** Shrink the globe below the 3D tiles (1 = full size). */
+  setInset(scale: number): void {
+    this.mat.uniforms.inset!.value = scale;
   }
 }
 

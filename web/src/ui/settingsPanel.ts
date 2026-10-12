@@ -117,6 +117,7 @@ export class SettingsPanel {
           this.row("Resolution scale", this.slider(g.renderScale, 0.5, 1.5, 0.05, (v) => up((x) => (x.graphics.renderScale = v), true), (v) => `${Math.round(v * 100)}%`)),
           this.row("Anti-aliasing (MSAA)", this.select(g.msaa, [[0, "Off"], [2, "2×"], [4, "4×"], [8, "8×"]], (v) => up((x) => (x.graphics.msaa = v as 0 | 2 | 4 | 8), true))),
           this.row("Bloom", this.toggle(g.bloom, (v) => up((x) => (x.graphics.bloom = v), true))),
+          this.row("Volumetric clouds", this.select(g.cloudSteps ?? 64, [[0, "Off"], [32, "Low (32)"], [64, "High (64)"], [128, "Max (128)"]], (v) => up((x) => (x.graphics.cloudSteps = v), true)), "Ray-march samples per pixel"),
           this.row("Atmosphere quality", this.select(g.atmosphereSteps, [[8, "Low (8)"], [16, "Medium (16)"], [32, "High (32)"], [64, "Max (64)"]], (v) => up((x) => (x.graphics.atmosphereSteps = v), true)), "Ray-march samples per pixel"),
           this.row("Star catalog limit", this.select(g.starLimitMag, [[6, "V ≤ 6 (≈5k stars)"], [7, "V ≤ 7 (≈15k)"], [8, "V ≤ 8 (≈41k)"]], (v) => up((x) => (x.graphics.starLimitMag = v), true))),
           this.row("Texture quality", this.select(g.textureQuality, [["standard", "Standard (2k)"], ["high", "High (5–8k)"]], (v) => up((x) => (x.graphics.textureQuality = v), true)), "Applies on next mission start"),

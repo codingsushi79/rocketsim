@@ -23,6 +23,8 @@ export interface WorldAssets {
   day: THREE.Texture;
   night: THREE.Texture;
   milkyWay: THREE.Texture;
+  water: THREE.Texture;
+  clouds: THREE.Texture;
   stars: Awaited<ReturnType<typeof import("./sky").loadStars>>;
 }
 
@@ -78,7 +80,7 @@ export class World {
       const [a, b, c] = row.radii;
       let view: BodyEntry["view"];
       if (row.id === SUN) view = new SunView(a);
-      else if (row.id === EARTH) view = new EarthView(assets.day, assets.night, a, c, seg);
+      else if (row.id === EARTH) view = new EarthView(assets.day, assets.night, assets.water, assets.clouds, a, c, seg);
       else {
         const t = BODY_TINT[row.id] ?? [0.3, 0.3, 0.3];
         view = new PlainBody(a, b, c, new THREE.Color(t[0], t[1], t[2]), Math.max(32, seg / 2));
@@ -193,6 +195,9 @@ export class World {
       e.pos.set(p[0], p[1], p[2]);
       e.view.mesh.position.copy(e.pos);
       const frame = s.bodyFrame(id);
+      if (frame.length === 9 && id === EARTH) {
+        this.earthFixed.set(frame[0]!, frame[1]!, frame[2]!, frame[3]!, frame[4]!, frame[5]!, frame[6]!, frame[7]!, frame[8]!);
+      }
       if (frame.length === 9) {
         // ICRF→body-fixed R (row-major); the mesh needs body-fixed→ICRF = Rᵀ.
         const m = new THREE.Matrix4().set(
@@ -314,6 +319,7 @@ export class World {
         topRadius: 6_471_000,
         sunDir: vec(toS).normalize(),
         sunIrradiance: (AU / len(toS)) ** 2,
+        toBodyFixed: this.earthFixed,
       };
     } else {
       this.atmo = null;
@@ -322,6 +328,8 @@ export class World {
   }
 
   atmo: import("./atmosphere").AtmosphereParams | null = null;
+  /** ICRF → Earth body-fixed (row-major from the core), refreshed per frame. */
+  private earthFixed = new THREE.Matrix3();
 }
 
 /** Line material for UI overlays drawn into the HDR scene (so geometry occludes them)
