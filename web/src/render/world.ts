@@ -198,7 +198,7 @@ export class World {
   /** Focus targets in cycle order. */
   focusTargets(): number[] {
     // Inner to outer, each planet followed by its moons; only bodies in the ephemeris.
-    const order = [EARTH, 301, SUN, 199, 299, 499, 401, 2000001, 2000004, 599, 501, 502, 503, 504, 699, 601, 602, 603, 604, 605, 606, 608, 799, 899];
+    const order = [EARTH, 301, SUN, 199, 299, 499, 401, 2000001, 2000004, 599, 501, 502, 503, 504, 699, 601, 602, 603, 604, 605, 606, 608, 799, 899, 999];
     return [FOCUS_SPACECRAFT, ...order.filter((id) => this.bodies.has(id))];
   }
 

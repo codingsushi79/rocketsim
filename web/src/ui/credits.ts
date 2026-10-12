@@ -29,6 +29,7 @@ export const CREDITS: CreditEntry[] = [
   { what: "Mars topography (MOLA MEGDR)", who: "NASA/GSFC MGS MOLA team, via PDS Geosciences Node" },
   { what: "Earth contact topography (Terrain Tiles)", who: "Mapzen and others: SRTM (NASA/JPL), GMTED2010 (USGS), ETOPO1 (NOAA NGDC)" },
   { what: "Planet and moon surface maps", who: "NASA Solar System Treks; LRO WAC, Viking, MESSENGER, Dawn, Galileo, Voyager, Cassini teams" },
+  { what: "Pluto global mosaic", who: "NASA/JHU APL/SwRI (New Horizons LORRI, MVIC), via USGS Astrogeology" },
   { what: "Jupiter map (PIA07782)", who: "NASA/JPL/Space Science Institute (Cassini ISS)" },
   { what: "Saturn, Uranus, Neptune and Venus cloud maps", who: "Solar System Scope (solarsystemscope.com/textures), based on NASA imagery", note: "CC BY 4.0" },
   { what: "Saturn ring radii and optical depths", who: "NASA NSSDC Saturnian Rings Fact Sheet" },

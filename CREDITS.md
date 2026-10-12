@@ -195,6 +195,17 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **Processing:** `tools/assets/prepare_globes.py` (crop to 3600 × 1800, resize, albedo gain).
 - **Retrieved:** 2026-10-12
 
+### Pluto: New Horizons LORRI/MVIC global mosaic, 300 m/px (`web/public/assets/pluto_2048.jpg`)
+- **Source:** USGS Astrogeology,
+  https://planetarymaps.usgs.gov/mosaic/Pluto_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif
+- **Producers:** NASA/Johns Hopkins University Applied Physics Laboratory/Southwest Research
+  Institute (New Horizons); mosaic by USGS Astrogeology.
+- **License:** NASA/USGS, public domain in the U.S.
+- **Processing:** `tools/assets/prepare_globes.py`: rolled to −180°…180°, the unobserved south
+  (polar night in 2015) filled with the observed mean, approximate tan tint (the map is
+  panchromatic), albedo gain (geometric albedo 0.52).
+- **Retrieved:** 2026-10-12
+
 ### Saturn, Uranus, Neptune and Venus cloud maps: Solar System Scope (`web/public/assets/{saturn_2048,uranus_1024,neptune_1024,venus_clouds_1024}.jpg`)
 - **Source:** https://www.solarsystemscope.com/textures/ (`2k_saturn.jpg`, `2k_uranus.jpg`,
   `2k_neptune.jpg`, `2k_venus_atmosphere.jpg`).

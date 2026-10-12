@@ -27,6 +27,13 @@
   "attribution": "Neptune: Solar System Scope (CC BY 4.0), from NASA imagery",
   "shell": 0.0
  },
+ "999": {
+  "name": "pluto",
+  "base": "assets/pluto_2048.jpg",
+  "gain": 1.4079,
+  "attribution": "Pluto: NASA/JHU APL/SwRI (New Horizons LORRI, MVIC), via USGS Astrogeology",
+  "shell": 0.0
+ },
  "606": {
   "name": "titan_haze",
   "base": "assets/titan_haze_8.jpg",
