@@ -70,6 +70,16 @@ export interface ControlSettings {
   hotas: HotasMapping;
 }
 
+/** Google Photorealistic 3D Tiles near the surface. */
+export interface EarthSettings {
+  tiles: boolean;
+  /** The player's own Map Tiles API key (stored only in this browser). Empty: use the
+   *  build-time VITE_GOOGLE_MAPS_API_KEY if any, else tiles stay off. */
+  apiKey: string;
+  /** Screen-space error target in pixels (lower = more detail, more requests). */
+  tileError: number;
+}
+
 export interface Settings {
   version: 1;
   graphics: GraphicsSettings;
@@ -77,6 +87,7 @@ export interface Settings {
   audio: AudioSettings;
   ui: InterfaceSettings;
   controls: ControlSettings;
+  earth: EarthSettings;
 }
 
 export const GRAPHICS_PRESETS: Record<Exclude<Preset, "custom">, Omit<GraphicsSettings, "preset" | "depthMode">> = {
@@ -86,6 +97,12 @@ export const GRAPHICS_PRESETS: Record<Exclude<Preset, "custom">, Omit<GraphicsSe
   max: { renderScale: 1.0, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8.0, textureQuality: "high", bodySegments: 256, cloudSteps: 128 },
 };
 
+/** The Map Tiles API key in effect: the player's, else the build's, else none. */
+export function mapTilesKey(s: Settings): string {
+  const build = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? "";
+  return (s.earth.apiKey || build).trim();
+}
+
 export function defaultSettings(): Settings {
   return {
     version: 1,
@@ -93,6 +110,7 @@ export function defaultSettings(): Settings {
     sim: { rtol: 1e-12, earthDegree: 8, thirdBody: true, harmonics: true, drag: true, srp: true, f107: 150, f107a: 150, ap: 4 },
     audio: { master: 0.8, music: 0.6, effects: 0.8 },
     ui: { hudScale: 1, showFps: false, starBoost: 1, showOrbit: true },
+    earth: { tiles: true, apiKey: "", tileError: 12 },
     controls: {
       deadzone: 0.08,
       invertPitch: false,
@@ -162,6 +180,7 @@ export class SettingsStore {
         audio: { ...d.audio, ...parsed.audio },
         ui: { ...d.ui, ...parsed.ui },
         controls: { ...d.controls, ...parsed.controls, hotas: { ...d.controls.hotas, ...parsed.controls?.hotas } },
+        earth: { ...d.earth, ...parsed.earth },
       };
     } catch {
       return d;

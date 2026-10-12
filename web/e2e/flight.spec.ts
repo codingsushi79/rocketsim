@@ -21,7 +21,7 @@ test("fly the RS-1: burn, RCS, staging", async ({ page }, info) => {
   page.on("console", (m) => m.type() === "error" && !m.text().startsWith("Failed to load resource") && errors.push(m.text()));
   // Low preset: CI renders with SwiftShader (software GL); physics is unaffected.
   await page.addInitScript(() => {
-    const low = { preset: "low", depthMode: "auto", renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6, textureQuality: "standard", bodySegments: 64 };
+    const low = { preset: "low", depthMode: "auto", renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6, textureQuality: "standard", bodySegments: 64, cloudSteps: 0 };
     localStorage.setItem("rocketsim.settings.v1", JSON.stringify({ version: 1, graphics: low }));
   });
   await page.goto("/?test");

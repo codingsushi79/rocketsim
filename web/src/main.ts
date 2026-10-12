@@ -13,6 +13,10 @@ import { FlightInput } from "./ui/input";
 import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
+import { EarthTiles } from "./render/earthTiles";
+import { GoogleAttribution } from "./ui/attribution";
+import { mapTilesKey } from "./settings";
+import { toggleFullscreen } from "./desktop";
 import { h } from "./ui/dom";
 
 const params = new URLSearchParams(location.search);
@@ -203,6 +207,22 @@ async function main(): Promise<void> {
   sim.start(scenario, settings.sim);
   const world = new World(engine, sim, bodies, assets, settings);
   engine.clouds = new CloudPass(assets.clouds);
+  // Google 3D tiles: only with a key and the setting on (otherwise nothing is requested).
+  const attribution = new GoogleAttribution();
+  const syncTiles = (s: ReturnType<typeof store.get>) => {
+    const key = mapTilesKey(s);
+    const want = s.earth.tiles && key.length > 0;
+    if (want && !world.tiles) {
+      world.tiles = new EarthTiles(engine, key, s.earth.tileError);
+      engine.scene.add(world.tiles.anchor);
+    } else if (!want && world.tiles) {
+      world.tiles.dispose();
+      world.tiles = null;
+    } else if (world.tiles) {
+      world.tiles.errorTarget = s.earth.tileError;
+    }
+  };
+  syncTiles(settings);
   // Vehicle models, loaded once per definition.
   const vehicleViews = new Map<string, VehicleView>();
   const useVehicle = async (sc: Scenario) => {
@@ -281,8 +301,9 @@ async function main(): Promise<void> {
     core.version,
   );
   const mapView = new MapView(engine, world, sim, bodies);
-  ui.append(mapView.overlay, mapView.panel, mapView.track, menus.root, hud.root);
+  ui.append(mapView.overlay, mapView.panel, mapView.track, menus.root, hud.root, attribution.root);
   store.subscribe((s) => {
+    syncTiles(s);
     engine.applySettings(s.graphics);
     world.applySettings(s, assets);
     sim.applySettings(s.sim);
@@ -290,8 +311,21 @@ async function main(): Promise<void> {
   });
   hud.setScale(settings.ui.hudScale);
 
+  const camKeys = new Set<string>();
+  const CAMERA_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Equal", "Minus", "NumpadAdd", "NumpadSubtract", "PageUp", "PageDown"];
+  window.addEventListener("keyup", (e) => camKeys.delete(e.code));
+  window.addEventListener("blur", () => camKeys.clear());
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (CAMERA_KEYS.includes(e.code)) {
+      camKeys.add(e.code);
+      e.preventDefault();
+    }
+    if (e.key === "F11") {
+      e.preventDefault();
+      void toggleFullscreen();
+      return;
+    }
     if (e.key === "Escape") {
       if (settingsOpen) closeSettings();
       else if (inGame) {
@@ -329,12 +363,24 @@ async function main(): Promise<void> {
   let last = performance.now();
   const step = (dt: number) => {
     input.update(dt);
+    // Keyboard camera: arrows orbit, = / − (or PageUp / PageDown) zoom.
+    if (inGame && !settingsOpen) {
+      const k = (c: string) => (camKeys.has(c) ? 1 : 0);
+      const rot = 1.2 * dt;
+      const yaw = (k("ArrowRight") - k("ArrowLeft")) * rot;
+      const pitch = (k("ArrowUp") - k("ArrowDown")) * rot;
+      const zin = k("Equal") + k("NumpadAdd") + k("PageUp");
+      const zout = k("Minus") + k("NumpadSubtract") + k("PageDown");
+      const zoom = Math.exp((zout - zin) * 1.8 * dt);
+      if (yaw || pitch || zoom !== 1) world.camera.nudge(yaw, pitch, zoom);
+    }
     hud.stageProgress = input.stageProgress;
     if (inGame || testScene) sim.tick(dt);
     else world.camera.spin(dt * 0.02);
     world.update(dt);
     mapView.keysFine = sim.controls.fine;
     mapView.update(dt);
+    attribution.update(world.tiles?.attribution() ?? "", hud.root);
     engine.render(dt, world.atmo);
     hud.update(dt, world.focusName(), centerNames.get(world.centerId) ?? "?", { showFps: store.get().ui.showFps, depth: engine.depth });
   };

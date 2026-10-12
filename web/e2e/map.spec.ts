@@ -17,7 +17,7 @@ test("map view: plan a node and execute it with the autopilot", async ({ page })
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => m.type() === "error" && !m.text().startsWith("Failed to load resource") && errors.push(m.text()));
   await page.addInitScript(() => {
-    const low = { preset: "low", depthMode: "auto", renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6, textureQuality: "standard", bodySegments: 64 };
+    const low = { preset: "low", depthMode: "auto", renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6, textureQuality: "standard", bodySegments: 64, cloudSteps: 0 };
     localStorage.setItem("rocketsim.settings.v1", JSON.stringify({ version: 1, graphics: low }));
   });
   await page.goto("/?test");

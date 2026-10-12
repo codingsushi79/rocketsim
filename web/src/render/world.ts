@@ -12,6 +12,7 @@ import { MilkyWay, PlanetPoints, StarField, lambertPhase } from "./sky";
 import { placeholderSpacecraft } from "./placeholder";
 import type { VehicleView } from "./spacecraft";
 import { PRE_EXPOSURE } from "./units";
+import type { EarthTiles } from "./earthTiles";
 
 const AU = 149_597_870_700;
 const SUN = 10;
@@ -197,6 +198,7 @@ export class World {
       const frame = s.bodyFrame(id);
       if (frame.length === 9 && id === EARTH) {
         this.earthFixed.set(frame[0]!, frame[1]!, frame[2]!, frame[3]!, frame[4]!, frame[5]!, frame[6]!, frame[7]!, frame[8]!);
+        this.earthFrameRows = Array.from(frame);
       }
       if (frame.length === 9) {
         // ICRF→body-fixed R (row-major); the mesh needs body-fixed→ICRF = Rᵀ.
@@ -321,6 +323,12 @@ export class World {
         sunIrradiance: (AU / len(toS)) ** 2,
         toBodyFixed: this.earthFixed,
       };
+      if (this.tiles && this.earthFrameRows.length === 9) {
+        const alt = earth.pos.length() - 6_371_000;
+        this.tiles.update(earth.pos, this.earthFrameRows, alt, this.atmo.sunDir, this.atmo.sunIrradiance);
+        // Pull the global imagery sphere 2 km below the tiles while they are shown.
+        (earth.view as EarthView).setInset(this.tiles.alpha > 0 ? 1 - 2000 / 6_378_137 : 1);
+      }
     } else {
       this.atmo = null;
     }
@@ -330,6 +338,9 @@ export class World {
   atmo: import("./atmosphere").AtmosphereParams | null = null;
   /** ICRF → Earth body-fixed (row-major from the core), refreshed per frame. */
   private earthFixed = new THREE.Matrix3();
+  private earthFrameRows: number[] = [];
+  /** Google 3D tiles (when a key is configured and enabled). */
+  tiles: EarthTiles | null = null;
 }
 
 /** Line material for UI overlays drawn into the HDR scene (so geometry occludes them)

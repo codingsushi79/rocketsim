@@ -1,20 +1,21 @@
 // Settings screen: Graphics, Simulation, Controls, Audio, Interface.
 
-import { GRAPHICS_PRESETS, type Preset, type SettingsStore } from "../settings";
+import { mapTilesKey, GRAPHICS_PRESETS, type Preset, type SettingsStore } from "../settings";
 import { clear, h } from "./dom";
 
-type Tab = "graphics" | "simulation" | "controls" | "audio" | "interface";
+type Tab = "graphics" | "earth" | "simulation" | "controls" | "audio" | "interface";
 
 export const KEYBINDINGS: [string, string][] = [
   [", / .", "Time warp down / up"],
   ["/", "Reset warp to 1×"],
   ["P", "Pause / resume time"],
   ["[ / ]", "Previous / next camera focus"],
-  ["Mouse drag", "Orbit camera"],
-  ["Wheel", "Zoom (1 m to interplanetary)"],
+  ["Mouse drag / arrows", "Orbit camera (flight and map view)"],
+  ["Wheel / = − / PgUp PgDn", "Zoom (1 m to interplanetary)"],
   ["O", "Toggle predicted orbit"],
   ["F3", "Debug overlay (FPS, integrator)"],
   ["Esc", "Pause menu"],
+  ["F11", "Fullscreen"],
   ["W / S", "Pitch down / up"],
   ["A / D", "Yaw left / right"],
   ["Q / E", "Roll left / right"],
@@ -48,7 +49,7 @@ export class SettingsPanel {
 
   private draw(): void {
     clear(this.root);
-    const tabs: Tab[] = ["graphics", "simulation", "controls", "audio", "interface"];
+    const tabs: Tab[] = ["graphics", "earth", "simulation", "controls", "audio", "interface"];
     this.root.append(
       h("h2", {}, "Settings"),
       h(
@@ -163,6 +164,24 @@ export class SettingsPanel {
               ]
             : []),
           h("table", { class: "keys" }, ...KEYBINDINGS.map(([k, d]) => h("tr", {}, h("td", { class: "key" }, k), h("td", {}, d)))),
+        );
+      }
+      case "earth": {
+        const e = s.earth;
+        const keyInput = h("input", { type: "password", value: e.apiKey, placeholder: "Map Tiles API key", autocomplete: "off", spellcheck: false, class: "key-input" }) as HTMLInputElement;
+        keyInput.addEventListener("change", () => up((x) => (x.earth.apiKey = keyInput.value.trim())));
+        const effective = mapTilesKey(s);
+        return h(
+          "div",
+          {},
+          this.row("Google Photorealistic 3D Tiles", this.toggle(e.tiles, (v) => up((x) => (x.earth.tiles = v))), "Streamed 3D imagery below ~1,200 km altitude"),
+          this.row("API key", keyInput, effective ? (e.apiKey ? "Using your key (stored only in this browser)" : "Using the build's key") : "No key: tiles are off and nothing is requested from Google"),
+          this.row("Tile detail", this.select(e.tileError, [[24, "Low"], [16, "Medium"], [12, "High"], [8, "Max"]], (v) => up((x) => (x.earth.tileError = v))), "Lower error = sharper, more data"),
+          h(
+            "p",
+            { class: "note" },
+            "Near the surface, Earth imagery and terrain come from Google Maps Platform (Map Tiles API), under Google's terms. They are streamed, never stored or pre-fetched, and used for display only. Clouds, atmosphere, the spacecraft and everything else are RocketSim's own. You need your own key with billing enabled: Google Cloud console → Map Tiles API.",
+          ),
         );
       }
       case "audio":

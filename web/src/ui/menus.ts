@@ -2,6 +2,7 @@
 
 import { SCENARIOS, type Scenario } from "../sim/simulation";
 import { CREDITS } from "./credits";
+import { isDesktop, quitApp } from "../desktop";
 import { clear, h } from "./dom";
 
 export interface MenuActions {
@@ -42,8 +43,9 @@ export class Menus {
           h("button", { disabled: true, title: "Save/load arrives in M10" }, "Load Mission"),
           h("button", { id: "btn-settings", onclick: () => this.actions.openSettings(() => this.main()) }, "Settings"),
           h("button", { id: "btn-credits", onclick: () => this.credits() }, "Credits"),
+          isDesktop() ? h("button", { id: "btn-quit", onclick: () => void quitApp() }, "Quit to Desktop") : null,
         ),
-        h("div", { class: "version" }, `sim-core ${this.version} · milestone 4 build`),
+        h("div", { class: "version" }, `sim-core ${this.version} · milestone 7 build${isDesktop() ? " · desktop" : ""}`),
       ),
     );
   }
@@ -109,6 +111,7 @@ export class Menus {
           h("button", { class: "primary", id: "btn-resume", onclick: () => this.actions.resume() }, "Resume"),
           h("button", { onclick: () => this.actions.openSettings(() => this.pause()) }, "Settings"),
           h("button", { onclick: () => this.actions.toMainMenu() }, "Main Menu"),
+          isDesktop() ? h("button", { onclick: () => void quitApp() }, "Quit to Desktop") : null,
         ),
       ),
     );

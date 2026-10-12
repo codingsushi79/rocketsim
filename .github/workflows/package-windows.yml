@@ -1,15 +1,20 @@
-name: Package (Windows .exe)
+name: Package (desktop app)
 
-# Builds the game as a Windows desktop app (Tauri v2 + Edge WebView2):
+# Builds the game as a desktop application (Tauri v2):
+#   Windows (Edge WebView2):
 #   - RocketSim_x.y.z_x64-setup.exe  (NSIS installer, per-user, no admin rights)
 #   - RocketSim-portable.exe         (single executable; needs WebView2, preinstalled on Windows 10/11)
-# Runs on version tags, on pushes to main, and on demand.
+#   macOS: RocketSim-macos.zip (RocketSim.app, unsigned: right-click → Open the first time)
+# Every push to main refreshes the "nightly" pre-release; v* tags make a release.
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     tags: ["v*"]
+
+permissions:
+  contents: write
 
 concurrency:
   group: package-windows-${{ github.ref }}
@@ -103,8 +108,81 @@ jobs:
           name: RocketSim-windows
           path: dist-windows
           retention-days: 30
-      - name: Attach to the GitHub release (tags only)
+
+  macos:
+    name: macOS app
+    needs: ephemeris
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            desktop/src-tauri -> target
+      - name: Install wasm-bindgen-cli (version pinned in Cargo.toml)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/package-lock.json
+      - run: ./scripts/build-wasm.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: ephemeris
+          path: web/public/ephemeris
+      - name: Build the web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Package with Tauri
+        working-directory: desktop
+        run: |
+          npm ci
+          npx tauri build --bundles app
+      - name: Zip the app
+        run: |
+          mkdir -p dist-macos
+          ditto -c -k --keepParent desktop/src-tauri/target/release/bundle/macos/RocketSim.app dist-macos/RocketSim-macos.zip
+          ls -la dist-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RocketSim-macos
+          path: dist-macos
+          retention-days: 30
+
+  publish:
+    name: Publish release
+    needs: [windows, macos]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Nightly pre-release (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la dist
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly dist/* --prerelease --target "$GITHUB_SHA" \
+            --title "RocketSim nightly (${GITHUB_SHA::7})" \
+            --notes "Latest build of main. Windows: download RocketSim-portable.exe and run it (or the setup .exe to install). macOS: unzip RocketSim-macos.zip, right-click RocketSim.app → Open."
+      - name: Release (tags)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist-windows/* --title "RocketSim ${GITHUB_REF_NAME}" --generate-notes || gh release upload "${GITHUB_REF_NAME}" dist-windows/* --clobber
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --title "RocketSim ${GITHUB_REF_NAME}" --generate-notes || gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
