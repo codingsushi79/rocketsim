@@ -18,6 +18,7 @@ pub mod frames;
 pub mod gravity;
 pub mod integrator;
 pub mod kepler;
+pub mod lambert;
 pub mod maneuver;
 pub mod math;
 pub mod naif_text_kernel;
@@ -29,6 +30,7 @@ pub mod propagator;
 pub mod rcs_alloc;
 pub mod terrain;
 pub mod time;
+pub mod transfer;
 pub mod vehicle;
 
 /// Crate version, shown in the UI and embedded in save files.
