@@ -14,6 +14,7 @@ import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
 import { loadHeightGrid, type HeightGrid } from "./render/planetSurface";
+import type { SurfaceDef } from "./render/world";
 import { EarthTiles } from "./render/earthTiles";
 import { SurfaceAttribution } from "./ui/attribution";
 import { surfaceSource } from "./settings";
@@ -39,6 +40,8 @@ interface TestHooks {
   sim?: Simulation;
   /** World camera (tests frame the vehicle). */
   camera?: { setDistance(d: number, immediate?: boolean): void; setAngles(y: number, p: number, immediate?: boolean): void };
+  /** World focus (tests look at bodies). */
+  world?: { focus: number; focusTargets(): number[]; cycleFocus(dir: 1 | -1): void };
 }
 declare global {
   interface Window {
@@ -83,18 +86,28 @@ async function loadAssets(quality: "standard" | "high", status: (s: string) => v
       }
     }),
   );
-  const [day, night, milkyWay, water, clouds, moon, mars] = await Promise.all([
+  status("Loading planet maps…");
+  const surfaceDefs = (await fetch("assets/surfaces.json").then((r) => r.json())) as Record<string, SurfaceDef>;
+  const surfaces = new Map<number, { def: SurfaceDef; base: THREE.Texture }>();
+  await Promise.all(
+    Object.entries(surfaceDefs).map(async ([id, def]) => {
+      try {
+        surfaces.set(Number(id), { def, base: await loadTexture(def.base) });
+      } catch (e) {
+        console.warn(`surface ${def.name}: ${String(e)}`);
+      }
+    }),
+  );
+  const [day, night, milkyWay, water, clouds] = await Promise.all([
     pick("assets/earth_day_5400.jpg", "assets/earth_day_2048.jpg"),
     pick("assets/earth_night_8192.jpg", "assets/earth_night_2048.jpg"),
     pick("assets/milkyway_4096.jpg", "assets/milkyway_2048.jpg"),
     pick("assets/earth_water_4096.png", "assets/earth_water_2048.png"),
     pick("assets/earth_clouds_8192.jpg", "assets/earth_clouds_2048.jpg"),
-    loadTexture("assets/moon_2048.jpg"),
-    loadTexture("assets/mars_2048.jpg"),
   ]);
   status("Loading star catalog…");
   const stars = await loadStars("assets/stars_hip_v8.bin");
-  return { day, night, milkyWay, water, clouds, moon, mars, terrain, terrainBytes, stars };
+  return { day, night, milkyWay, water, clouds, surfaces, terrain, terrainBytes, stars };
 }
 
 function makeTestHooks(engine: Engine, step: (dt: number) => void): TestHooks {
@@ -436,6 +449,7 @@ async function main(): Promise<void> {
     hooks.hudText = () => hud.root.textContent ?? "";
     hooks.sim = sim;
     hooks.camera = world.camera;
+    hooks.world = world;
     window.__rocketsim = hooks;
   }
   const loop = (now: number) => {

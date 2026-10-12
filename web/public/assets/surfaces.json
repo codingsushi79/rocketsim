@@ -1,0 +1,130 @@
+{
+ "301": {
+  "name": "moon",
+  "url": "https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 8,
+  "base": "assets/moon_2048.jpg",
+  "gain": 1.2134,
+  "attribution": "Moon imagery: NASA/GSFC/Arizona State University (LRO WAC) via NASA Trek"
+ },
+ "499": {
+  "name": "mars",
+  "url": "https://trek.nasa.gov/tiles/Mars/EQ/Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 7,
+  "base": "assets/mars_2048.jpg",
+  "gain": 1.0666,
+  "attribution": "Mars imagery: NASA/JPL/USGS (Viking MDIM 2.1) via NASA Trek"
+ },
+ "199": {
+  "name": "mercury",
+  "url": "https://trek.nasa.gov/tiles/Mercury/EQ/Mercury_MESSENGER_MDIS_Basemap_BDR_Mosaic_Global_166m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 7,
+  "base": "assets/mercury_2048.jpg",
+  "gain": 2.0754,
+  "attribution": "Mercury imagery: NASA/JHU APL/Carnegie Institution of Washington (MESSENGER MDIS) via NASA Trek"
+ },
+ "2000001": {
+  "name": "ceres",
+  "url": "https://trek.nasa.gov/tiles/Ceres/EQ/CE_LAMO_G_00N_180E_EQU_CLR_scale.eq/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 7,
+  "base": "assets/ceres_1024.jpg",
+  "gain": 1.1835,
+  "attribution": "Ceres imagery: NASA/JPL-Caltech/UCLA/MPS/DLR/IDA (Dawn FC) via NASA Trek"
+ },
+ "2000004": {
+  "name": "vesta",
+  "url": "https://trek.nasa.gov/tiles/Vesta/EQ/VestaHAMOLAMOBlend.eq/1.0.0/default/default028mm/{z}/{y}/{x}.png",
+  "maxLevel": 7,
+  "base": "assets/vesta_1024.jpg",
+  "gain": 4.6998,
+  "attribution": "Vesta imagery: NASA/JPL-Caltech/UCLA/MPS/DLR/IDA (Dawn FC) via NASA Trek"
+ },
+ "606": {
+  "name": "titan",
+  "url": "https://trek.nasa.gov/tiles/Titan/EQ/TitanISS2018June.proj.scale/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 3,
+  "base": "assets/titan_1024.jpg",
+  "gain": 0.7737,
+  "attribution": "Titan imagery: NASA/JPL-Caltech/Space Science Institute (Cassini ISS) via NASA Trek"
+ },
+ "502": {
+  "name": "europa",
+  "url": "https://trek.nasa.gov/tiles/Europa/EQ/20150218_europa_global_map_20000x10000/1.0.0/default/default028mm/{z}/{y}/{x}.png",
+  "maxLevel": 5,
+  "base": "assets/europa_1024.jpg",
+  "gain": 2.2856,
+  "attribution": "Europa imagery: NASA/JPL/USGS (Galileo SSI, Voyager) via NASA Trek"
+ },
+ "503": {
+  "name": "ganymede",
+  "url": "https://trek.nasa.gov/tiles/Ganymede/EQ/Ganymede_Voyager_GalileoSSI_global_mosaic_1km/1.0.0/default/default028mm/{z}/{y}/{x}.png",
+  "maxLevel": 5,
+  "base": "assets/ganymede_1024.jpg",
+  "gain": 5.2302,
+  "attribution": "Ganymede imagery: NASA/JPL/USGS (Voyager, Galileo SSI) via NASA Trek"
+ },
+ "501": {
+  "name": "io",
+  "url": "https://trek.nasa.gov/tiles/Io/EQ/Io_GalileoSSI_Voyager_Global_Mosaic_ClrMerge_1km/1.0.0/default/default028mm/{z}/{y}/{x}.png",
+  "maxLevel": 4,
+  "base": "assets/io_1024.jpg",
+  "gain": 2.8027,
+  "attribution": "Io imagery: NASA/JPL/USGS (Galileo SSI, Voyager) via NASA Trek"
+ },
+ "602": {
+  "name": "enceladus",
+  "url": "https://trek.nasa.gov/tiles/Enceladus/EQ/Enceladus_Cassini_ISS_Global_Mosaic_100m_HPF/1.0.0/default/default028mm/{z}/{y}/{x}.png",
+  "maxLevel": 5,
+  "base": "assets/enceladus_1024.jpg",
+  "gain": 4.4156,
+  "attribution": "Enceladus imagery: NASA/JPL-Caltech/Space Science Institute/LPI (Cassini ISS) via NASA Trek"
+ },
+ "601": {
+  "name": "mimas",
+  "url": "https://trek.nasa.gov/tiles/Mimas/EQ/MI_170630_DLR_basemap/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 4,
+  "base": "assets/mimas_1024.jpg",
+  "gain": 5.3274,
+  "attribution": "Mimas imagery: NASA/JPL-Caltech/SSI/DLR (Cassini ISS) via NASA Trek"
+ },
+ "604": {
+  "name": "dione",
+  "url": "https://trek.nasa.gov/tiles/Dione/EQ/Dione_Cassini_Voyageglobal_154m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 5,
+  "base": "assets/dione_1024.jpg",
+  "gain": 4.3198,
+  "attribution": "Dione imagery: NASA/JPL-Caltech/SSI/LPI (Cassini ISS, Voyager) via NASA Trek"
+ },
+ "605": {
+  "name": "rhea",
+  "url": "https://trek.nasa.gov/tiles/Rhea/EQ/RH_120803_DLR_basemap/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 4,
+  "base": "assets/rhea_1024.jpg",
+  "gain": 5.2613,
+  "attribution": "Rhea imagery: NASA/JPL-Caltech/SSI/DLR (Cassini ISS) via NASA Trek"
+ },
+ "603": {
+  "name": "tethys",
+  "url": "https://trek.nasa.gov/tiles/Tethys/EQ/Tethys_Cassini_mosaic_global_293m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 4,
+  "base": "assets/tethys_1024.jpg",
+  "gain": 4.8908,
+  "attribution": "Tethys imagery: NASA/JPL-Caltech/SSI/LPI (Cassini ISS) via NASA Trek"
+ },
+ "608": {
+  "name": "iapetus",
+  "url": "https://trek.nasa.gov/tiles/Iapetus/EQ/Iapetus_Cassini_Voyager_mosaic_global_783m/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 3,
+  "base": "assets/iapetus_1024.jpg",
+  "gain": 1.0485,
+  "attribution": "Iapetus imagery: NASA/JPL-Caltech/SSI/LPI (Cassini ISS, Voyager) via NASA Trek"
+ },
+ "401": {
+  "name": "phobos",
+  "url": "https://trek.nasa.gov/tiles/Phobos/EQ/Phobos_Viking_Mosaic_40ppd_DLRcontrol/1.0.0/default/default028mm/{z}/{y}/{x}.jpg",
+  "maxLevel": 5,
+  "base": "assets/phobos_1024.jpg",
+  "gain": 0.257,
+  "attribution": "Phobos imagery: NASA/JPL/DLR (Viking) via NASA Trek"
+ }
+}

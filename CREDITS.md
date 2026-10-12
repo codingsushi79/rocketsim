@@ -138,6 +138,55 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
   (logo plus the aggregated per-tile copyright) is shown on screen whenever tiles are visible.
 - **Renderer:** `3d-tiles-renderer` 0.5.3 (NASA-AMMOS), Apache-2.0.
 
+### Cesium ion: Cesium World Terrain (asset 1), Bing Maps Aerial (asset 2), Google 3D via ion (asset 2275207) (streamed at run time, never stored)
+- **Source:** https://api.cesium.com/v1/assets/{id}/endpoint, with the player's own ion access
+  token (`VITE_CESIUM_ION_TOKEN` or Settings → Earth; never committed).
+- **Terms:** Cesium ion Terms of Service; Bing Maps / Microsoft terms for the imagery. The
+  per-asset attributions returned by the endpoint and the Bing logo plus provider credits
+  (from the Bing imagery metadata) are shown on screen whenever tiles are visible.
+- **Retrieved:** streamed; integration written 2026-10-12.
+
+### Lunar topography: LRO LOLA LDEM_16 (`web/public/terrain/moon.rsdem`, downsampled to 8 px/deg)
+- **Source:** PDS Geosciences Node, https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/img/ldem_16.img
+  (LRO-L-LOLA-4-GDR-V1).
+- **Reference:** Smith, D. E., et al. (2010), "The Lunar Orbiter Laser Altimeter investigation
+  on the Lunar Reconnaissance Orbiter mission", *Space Sci. Rev.* 150:209.
+- **License:** NASA PDS data, public domain in the U.S.
+- **Retrieved:** 2026-10-12
+
+### Mars topography: MGS MOLA MEGDR megt90n000eb (`web/public/terrain/mars.rsdem`, 8 px/deg)
+- **Source:** PDS Geosciences Node, https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img
+- **Reference:** Smith, D. E., et al. (2001), "Mars Orbiter Laser Altimeter: Experiment summary
+  after the first year of global mapping of Mars", *JGR* 106(E10):23689.
+- **License:** NASA PDS data, public domain in the U.S.
+- **Retrieved:** 2026-10-12
+
+### Earth topography (contact grid only): AWS Terrain Tiles, Terrarium encoding, zoom 3 (`web/public/terrain/earth.rsdem`)
+- **Source:** https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
+  (Registry of Open Data on AWS, "Terrain Tiles"; originally Mapzen).
+- **Content:** a blend of SRTM, GMTED2010, ETOPO1 and other sources; at zoom 3 the global
+  sources (GMTED2010, ETOPO1) dominate.
+- **License / attribution:** per the Terrain Tiles attribution document
+  (https://github.com/tilezen/joerd/blob/master/docs/attribution.md): "ETOPO1: Amante, C. and
+  B. W. Eakins, NOAA NGDC (2009)"; "GMTED2010: U.S. Geological Survey"; "SRTM: NASA/JPL";
+  terrain tiles © Mapzen and others.
+- **Retrieved:** 2026-10-12
+
+### Planetary and satellite base maps and surface tiles: NASA Solar System Treks (`web/public/assets/<body>_*.jpg`, `surfaces.json`; finer tiles streamed at run time)
+- **Source:** NASA Solar System Treks WMTS, https://trek.nasa.gov/tiles/{Body}/EQ/{layer}/1.0.0/default/default028mm/{z}/{y}/{x}
+  (Moon, Mars, Mercury, Ceres, Vesta, Io, Europa, Ganymede, Mimas, Enceladus, Tethys, Dione,
+  Rhea, Titan, Iapetus, Phobos). Layer names and per-mission credits are in
+  `tools/assets/prepare_trek_base.py` and shown on screen.
+- **Producers:** NASA/GSFC/ASU (LRO WAC); NASA/JPL/USGS (Viking MDIM 2.1, Galileo SSI,
+  Voyager); NASA/JHU APL/CIW (MESSENGER MDIS); NASA/JPL-Caltech/UCLA/MPS/DLR/IDA (Dawn FC);
+  NASA/JPL-Caltech/SSI, DLR, LPI (Cassini ISS); NASA/JPL/DLR (Viking, Phobos).
+- **License:** NASA and USGS imagery, public domain in the U.S. Credit NASA Solar System Treks
+  and the producing missions.
+- **Albedo calibration:** geometric albedos from the NASA GSFC planetary fact sheets and the JPL
+  SSD Planetary Satellite Physical Parameters table; Ceres and Vesta from Dawn (Li et al. 2016;
+  Reddy et al. 2012).
+- **Retrieved:** 2026-10-12
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`
