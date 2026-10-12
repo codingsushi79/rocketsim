@@ -65,6 +65,9 @@ class Geo {
  *  profile's local slope (smooth). Angles a0..a1 (rad) allow partial sectors.
  *  `flip` turns normals inward (inside of a nozzle). */
 function lathe(g, profile, seg, a0 = 0, a1 = 2 * Math.PI, flip = false) {
+  // A profile running toward −X winds the other way round: flip it so the surface
+  // still faces outward (`flip` alone means "the inside of the surface").
+  if (profile[profile.length - 1][0] < profile[0][0]) flip = !flip;
   const rings = [];
   for (let i = 0; i < profile.length; i++) {
     const [x, r] = profile[i];
@@ -103,9 +106,10 @@ function disk(g, x, r, facing, seg, rInner = 0) {
     outer.push(g.vert([x, r * Math.cos(a), r * Math.sin(a)], n));
     inner.push(g.vert([x, rInner * Math.cos(a), rInner * Math.sin(a)], n));
   }
+  // (b − a) × (c − a) must point along `facing` (counter-clockwise from outside).
   for (let k = 0; k < seg; k++) {
-    if (facing > 0) g.quad(inner[k], inner[k + 1], outer[k + 1], outer[k]);
-    else g.quad(inner[k], outer[k], outer[k + 1], inner[k + 1]);
+    if (facing > 0) g.quad(inner[k], outer[k], outer[k + 1], inner[k + 1]);
+    else g.quad(inner[k], inner[k + 1], outer[k + 1], outer[k]);
   }
 }
 
