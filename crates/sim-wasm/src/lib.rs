@@ -81,6 +81,7 @@ use sim_core::prediction::{self, HorizonPolicy, Marker, MarkerKind, PlannedBurn,
 use sim_core::propagator::{
     Ballistic, ForceConfig, IntegratorConfig, Propagator, ScState, Trajectory, occultation,
 };
+use sim_core::transfer;
 use sim_core::vehicle::VehicleConfig;
 
 /// Rebuild the coast prediction at most this often (s of sim time) while thrusting.
@@ -516,6 +517,13 @@ impl Sim {
     }
 
     /// The spacecraft's state now: the flight if there is one, else the M3 trajectory.
+    /// The current orbit as a two-body parking orbit for transfer planning.
+    fn parking(&self) -> Option<transfer::Parking> {
+        let s = self.current_state()?;
+        let c = s.state.frame.center;
+        Some(transfer::Parking { center: c, epoch: self.epoch, r: s.state.r, v: s.state.v, mu: self.reg.get(c)?.gm })
+    }
+
     fn current_state(&self) -> Option<ScState> {
         match &self.flight {
             Some(f) => f.state_at(self.epoch),
@@ -838,6 +846,52 @@ impl Sim {
     }
 
     /// Target body (NAIF id), or a negative number for none.
+    /// Porkchop grid for a transfer from the current orbit to `target` (M9).
+    /// Returns [n_dep, n_tof, dep epochs (TDB s)…, tofs (s)…, Δv (m/s)…, arrival v∞…]
+    /// (row-major by departure; NaN where Lambert fails). Empty without a flight.
+    #[wasm_bindgen(js_name = transferPorkchop)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn transfer_porkchop(&self, target: i32, t0: f64, t1: f64, n_dep: u32, tof_min: f64, tof_max: f64, n_tof: u32) -> Vec<f64> {
+        let Some(park) = self.parking() else { return Vec::new() };
+        let pc = transfer::porkchop(&self.eph, &self.reg, &park, BodyId(target), Epoch::from_tdb_seconds(t0), Epoch::from_tdb_seconds(t1), n_dep as usize, tof_min, tof_max, n_tof as usize);
+        let mut out = vec![f64::from(n_dep), f64::from(n_tof)];
+        out.extend(pc.dep);
+        out.extend(pc.tof);
+        out.extend(pc.dv);
+        out.extend(pc.v_inf);
+        out
+    }
+
+    /// Plan the transfer departing at `t_dep` (TDB s) with flight time `tof` (s) to a
+    /// periapsis `periapsis_alt` (m) above `target`: departure + midcourse nodes corrected
+    /// on the n-body propagator (M9). Replaces the plan's nodes and sets the target.
+    /// Returns JSON {ok, nodes, miss, error}.
+    #[wasm_bindgen(js_name = transferPlan)]
+    pub fn transfer_plan(&mut self, target: i32, t_dep: f64, tof: f64, periapsis_alt: f64) -> String {
+        let Some(park) = self.parking() else { return json!({"ok": false, "error": "no flight"}).to_string() };
+        let Some(s0) = self.current_state() else { return json!({"ok": false, "error": "no state"}).to_string() };
+        let tgt = BodyId(target);
+        let r_p = self.reg.get(tgt).map_or(0.0, |b| b.radii.equatorial_mean()) + periapsis_alt;
+        let engine = self.flight.as_ref().and_then(|f| f.engine_model()).map(|(e, _)| e);
+        let mut policy = self.policy;
+        policy.cap = policy.cap.max(tof * 1.3);
+        let res = transfer::plan(&self.propagator(), &self.eph, &self.reg, &s0, &park, engine, &policy, tgt, Epoch::from_tdb_seconds(t_dep), tof, r_p);
+        match res {
+            Ok((nodes, miss)) => {
+                self.plan.legs[0].nodes = nodes.clone();
+                self.policy.cap = policy.cap;
+                if let Some(f) = &mut self.flight {
+                    f.target = Some(tgt);
+                }
+                self.plan_dirty = true;
+                self.rebuild_plan();
+                let ns: Vec<Value> = nodes.iter().map(|n| json!({"t": n.epoch_tdb, "prograde": n.prograde, "normal": n.normal, "radial": n.radial, "dv": n.dv_magnitude()})).collect();
+                json!({"ok": true, "nodes": ns, "miss": miss}).to_string()
+            }
+            Err(e) => json!({"ok": false, "error": e.to_string()}).to_string(),
+        }
+    }
+
     #[wasm_bindgen(js_name = setTarget)]
     pub fn set_target(&mut self, body: i32) {
         if let Some(f) = &mut self.flight {

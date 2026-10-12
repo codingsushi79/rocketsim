@@ -183,7 +183,11 @@ export class Engine {
           void main() {
             float e = fixedExposure > 0.0 ? fixedExposure : exp2(texture2D(exposureTex, vec2(0.5)).r);
             // Clamp to fp16 range (the solar disk can exceed it after a large exposure step).
-            gl_FragColor = vec4(min(texture2D(src, vUv).rgb * (e / preExposure), vec3(6e4)), 1.0);
+            vec3 c = texture2D(src, vUv).rgb * (e / preExposure);
+            // NaN/Inf guard: one bad pixel would otherwise be spread by the glare blur into
+            // a large black hole after tone mapping.
+            if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+            gl_FragColor = vec4(min(max(c, vec3(0.0)), vec3(6e4)), 1.0);
           }`,
       }),
     );

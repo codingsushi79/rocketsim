@@ -39,7 +39,11 @@ export class Glare {
           uniform sampler2D src;
           uniform vec2 texel;
           varying vec2 vUv;
-          vec3 s(vec2 o) { return min(texture2D(src, vUv + o * texel).rgb, vec3(6e4)); }
+          vec3 s(vec2 o) {
+            vec3 c = texture2D(src, vUv + o * texel).rgb;
+            if (any(isnan(c)) || any(isinf(c))) return vec3(0.0);
+            return clamp(c, vec3(0.0), vec3(6e4));
+          }
           void main() {
             // Jimenez 2014: 13 taps, five overlapping 4-tap boxes.
             vec3 a = s(vec2(-2, 2)), b = s(vec2(0, 2)), c = s(vec2(2, 2));

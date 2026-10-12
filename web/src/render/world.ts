@@ -552,7 +552,8 @@ export class World {
     c.near = this.mapMode ? Math.max(0.05, this.camera.distance * 1e-4) : 0.05;
     c.updateProjectionMatrix();
     c.updateMatrixWorld();
-    this.engine.sun = this.sunState();
+    // Lens effects belong to the camera view, not the schematic map.
+    this.engine.sun = this.mapMode ? null : this.sunState();
 
     // Terrain surfaces need the final camera (frustum, distance).
     for (const [id, surf] of this.surfaces) {

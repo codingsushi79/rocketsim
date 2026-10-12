@@ -135,6 +135,12 @@ export class VehicleView {
         for (const mm of Array.isArray(m) ? m : [m]) addIncandescence(mm);
       }
     });
+    // Plasma envelope layers on every hull mesh (before plumes/puffs are added).
+    const hull: THREE.Mesh[] = [];
+    gltf.scene.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) hull.push(o as THREE.Mesh);
+    });
+    v.entry.attach(hull);
     for (const e of def.engines) {
       const node = gltf.scene.getObjectByName(`engine_${e.id}`) ?? new THREE.Group();
       const part = def.parts.find((p) => p.kind === "engine" && p.stage === e.stage);
@@ -278,7 +284,7 @@ export class VehicleView {
     const toBody = this.root.quaternion.clone().invert();
     const flow = new THREE.Vector3(t.vAir[0], t.vAir[1], t.vAir[2]).applyQuaternion(toBody);
     const viewFromBody = camera.quaternion.clone().invert().multiply(this.root.quaternion);
-    this.entry.update(dt, t.heat, t.q, flow, viewFromBody);
+    this.entry.update(dt, t.heat, t.q, flow, viewFromBody, this.root.quaternion);
   }
 
   /** A copy of one stage's model, origin at that stage's CoM (for debris). */

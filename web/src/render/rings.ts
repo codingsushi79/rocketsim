@@ -159,7 +159,15 @@ export class SaturnRings {
           // uniform in ln a, so the unresolved fraction is ln(a_res/a_min)/ln(a_max/a_min),
           // a_res = distance / RANGE_PER_RADIUS (the smallest particle drawn there).
           if (handover > 0.0) {
-            float ares = max(distance(vPosB, camB) / ${RANGE_PER_RADIUS.toFixed(1)}, ${A_MIN});
+            // Close to the 10 m particle layer the sheet is seen edge-on, where a 2-D plane
+            // turns into an opaque smoky slab through the camera: there, near the camera,
+            // the individual particles alone represent the ring.
+            float nearPlane = 1.0 - smoothstep(${(LAYER * 3).toFixed(1)}, ${(LAYER * 60).toFixed(1)}, abs(camB.z));
+            float dc = distance(vPosB, camB);
+            float hole = mix(1.0, smoothstep(0.5 * handover, 2.0 * handover, dc), nearPlane);
+            if (hole <= 0.0) discard;
+            tau *= hole;
+            float ares = max(dc / ${RANGE_PER_RADIUS.toFixed(1)}, ${A_MIN});
             tau *= clamp(log(ares / ${A_MIN}) / log(${A_MAX.toFixed(1)} / ${A_MIN}), 0.0, 1.0);
             if (tau <= 0.0) discard;
           }
