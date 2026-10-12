@@ -211,7 +211,7 @@ export class MapView {
     const info = this.sim.sim.orbitInfo();
     const apo = info.length >= 11 && Number.isFinite(info[7]) ? info[7]! + (row?.radii[0] ?? 0) : 4 * (row?.radii[0] ?? 7e6);
     this.world.focus = c;
-    this.world.camera.minDistance = (row?.radii[0] ?? 1e6) * 1.2;
+    this.world.camera.minDistance = (row?.radii[0] ?? 1e6) + 3000; // down to ~3 km above the surface
     this.world.camera.setDistance(Math.max(apo * 5, (row?.radii[0] ?? 1e6) * 6), true);
     // Look down the orbit normal (tilted 25° for depth), in the map's ecliptic frame.
     const sc = this.sim.sim.spacecraft();
@@ -240,7 +240,7 @@ export class MapView {
     const row = this.bodies.find((b) => b.id === id);
     if (!row) return;
     this.world.focus = id;
-    this.world.camera.minDistance = row.radii[0] * 1.2;
+    this.world.camera.minDistance = row.radii[0] + 3000;
     const soi = this.sim.sim.soiRadius(id);
     this.world.camera.setDistance(Number.isFinite(soi) ? Math.min(soi * 1.5, row.radii[0] * 60) : row.radii[0] * 8, false);
   }

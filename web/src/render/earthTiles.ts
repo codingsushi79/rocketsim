@@ -17,7 +17,7 @@
 
 import * as THREE from "three";
 import { TilesRenderer } from "3d-tiles-renderer";
-import { GoogleCloudAuthPlugin } from "3d-tiles-renderer/plugins";
+import { CesiumIonAuthPlugin, CesiumIonOverlay, GoogleCloudAuthPlugin, ImageOverlayPlugin } from "3d-tiles-renderer/plugins";
 import type { Engine } from "./engine";
 import { PRE_EXPOSURE } from "./units";
 
@@ -60,6 +60,47 @@ const FS = /* glsl */ `
   }
 `;
 
+/** Where the near-surface Earth comes from. */
+export type SurfaceSource =
+  /** Cesium World Terrain (ion asset 1) with Bing Maps aerial imagery (ion asset 2). */
+  | { kind: "ion-terrain"; token: string }
+  /** Google Photorealistic 3D Tiles through Cesium ion (asset 2275207). */
+  | { kind: "ion-google"; token: string }
+  /** Google Photorealistic 3D Tiles with a Map Tiles API key. */
+  | { kind: "google"; key: string };
+
+/** Cesium ion asset ids (Cesium ion Asset Depot). */
+const ION_WORLD_TERRAIN = 1;
+const ION_BING_AERIAL = 2;
+const ION_GOOGLE_3D = 2275207;
+
+/** Bing Maps imagery attributions (Bing Maps terms, also required through Cesium ion):
+ *  the Bing logo and the imagery providers whose coverage areas contain the view at the
+ *  current zoom, from Bing's imagery metadata (as CesiumJS's BingMapsImageryProvider). */
+class BingCredits {
+  logo = "";
+  private providers: { attribution: string; areas: { zoomMin: number; zoomMax: number; bbox: [number, number, number, number] }[] }[] = [];
+
+  async load(token: string): Promise<void> {
+    const ep = await fetch(`https://api.cesium.com/v1/assets/${ION_BING_AERIAL}/endpoint`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+    const { url, mapStyle, key } = ep.options as { url: string; mapStyle: string; key: string };
+    const meta = await fetch(`${url}/REST/v1/Imagery/Metadata/${mapStyle}?incl=ImageryProviders&key=${key}&uriScheme=https`).then((r) => r.json());
+    this.logo = meta.brandLogoUri ?? "";
+    const res = meta.resourceSets?.[0]?.resources?.[0];
+    this.providers = (res?.imageryProviders ?? []).map((p: { attribution: string; coverageAreas: { zoomMin: number; zoomMax: number; bbox: [number, number, number, number] }[] }) => ({ attribution: p.attribution, areas: p.coverageAreas }));
+  }
+
+  /** Providers credited for a view centred at (lat, lon) degrees at Bing zoom `z`. */
+  credits(lat: number, lon: number, z: number): string[] {
+    const out: string[] = [];
+    for (const p of this.providers) {
+      // bbox = [south, west, north, east]
+      if (p.areas.some((a) => z >= a.zoomMin && z <= a.zoomMax && lat >= a.bbox[0] && lat <= a.bbox[2] && lon >= a.bbox[1] && lon <= a.bbox[3])) out.push(p.attribution);
+    }
+    return out;
+  }
+}
+
 export class EarthTiles {
   /** Earth-centred, body-fixed anchor (matrix set every frame). */
   readonly anchor = new THREE.Group();
@@ -74,16 +115,45 @@ export class EarthTiles {
   /** Current blend weight (0 = hidden, no requests). */
   alpha = 0;
 
+  /** Whether the data is Google's (the Google Maps logo is then required). */
+  readonly google: boolean;
+  private bing: BingCredits | null = null;
+  /** Camera sub-point (deg) and altitude (m), for per-area imagery credits. */
+  private view = { lat: 0, lon: 0, alt: 1e7 };
+
   constructor(
     private engine: Engine,
-    apiKey: string,
+    readonly source: SurfaceSource,
     errorTarget: number,
   ) {
     this.anchor.matrixAutoUpdate = false;
     this.tiles = new TilesRenderer();
-    this.tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: apiKey, autoRefreshToken: true }));
+    this.google = source.kind !== "ion-terrain";
+    switch (source.kind) {
+      case "google":
+        this.tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: source.key, autoRefreshToken: true }));
+        break;
+      case "ion-google":
+        this.tiles.registerPlugin(new CesiumIonAuthPlugin({ apiToken: source.token, assetId: String(ION_GOOGLE_3D), autoRefreshToken: true }));
+        break;
+      case "ion-terrain":
+        this.bing = new BingCredits();
+        this.bing.load(source.token).catch((e) => console.warn("Bing metadata:", String(e)));
+        // Quantized-mesh terrain (registered by the ion plugin) with draped aerial imagery.
+        this.tiles.registerPlugin(new CesiumIonAuthPlugin({ apiToken: source.token, assetId: String(ION_WORLD_TERRAIN), autoRefreshToken: true }));
+        this.tiles.registerPlugin(
+          new ImageOverlayPlugin({
+            renderer: engine.renderer,
+            overlays: [new CesiumIonOverlay({ apiToken: source.token, assetId: String(ION_BING_AERIAL), autoRefreshToken: true })],
+          }),
+        );
+        break;
+    }
     this.tiles.errorTarget = errorTarget;
-    this.tiles.addEventListener("load-model", (e: { scene: THREE.Object3D }) => this.relight(e.scene));
+    this.tiles.addEventListener("load-model", (e: { scene: THREE.Object3D }) => {
+      if (this.source.kind === "ion-terrain") this.prepareTerrain(e.scene);
+      else this.relight(e.scene);
+    });
     this.tiles.addEventListener("dispose-model", (e: { scene: THREE.Object3D }) => {
       e.scene.traverse((o) => {
         const m = (o as THREE.Mesh).material;
@@ -96,6 +166,22 @@ export class EarthTiles {
     this.anchor.add(this.tiles.group);
     this.tiles.setCamera(engine.camera);
   }
+
+  /** Terrain meshes keep their (overlay-wrapped) standard materials, lit by the scene's
+   *  Sun light, which is set up in U with pre-exposure. Fully rough, no metal. */
+  private prepareTerrain(scene: THREE.Object3D): void {
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      if ("roughness" in m) {
+        m.roughness = 1;
+        m.metalness = 0;
+      }
+      this.terrainMaterials.add(m);
+    });
+  }
+  private terrainMaterials = new Set<THREE.Material>();
 
   /** Replace the tile's materials with ours (same texture, our lighting and units). */
   private relight(scene: THREE.Object3D): void {
@@ -136,6 +222,11 @@ export class EarthTiles {
     this.anchor.visible = a > 0;
     if (a <= 0) return;
     const R = icrfToBf;
+    // Camera position in body-fixed axes (camera at the render origin): −R·earth.
+    const bx = -(R[0]! * earth.x + R[1]! * earth.y + R[2]! * earth.z);
+    const by = -(R[3]! * earth.x + R[4]! * earth.y + R[5]! * earth.z);
+    const bz = -(R[6]! * earth.x + R[7]! * earth.y + R[8]! * earth.z);
+    this.view = { lat: (Math.atan2(bz, Math.hypot(bx, by)) * 180) / Math.PI, lon: (Math.atan2(by, bx) * 180) / Math.PI, alt: altitude };
     // Body-fixed → ICRF is the transpose of the core's ICRF → body-fixed matrix.
     this.anchor.matrix.set(
       R[0]!, R[3]!, R[6]!, earth.x,
@@ -151,6 +242,10 @@ export class EarthTiles {
     for (const m of this.materials) {
       m.transparent = a < 1;
     }
+    for (const m of this.terrainMaterials) {
+      m.transparent = a < 1;
+      m.opacity = a;
+    }
     const size = this.engine.pixelSize;
     this.tiles.setResolution(this.engine.camera, size.x, size.y);
     this.engine.camera.updateMatrixWorld();
@@ -161,16 +256,27 @@ export class EarthTiles {
     this.tiles.errorTarget = v;
   }
 
-  /** Aggregated data attributions of the displayed tiles (empty when none shown). */
-  attribution(): string {
-    if (this.alpha <= 0) return "";
+  /** Aggregated data attributions of the displayed tiles: plain text and (sanitised
+   *  by the caller) HTML snippets from Cesium ion. Empty when nothing is shown. */
+  attributions(): { text: string; html: string[] } {
+    if (this.alpha <= 0 || this.tiles.visibleTiles.size === 0) return { text: "", html: [] };
     const out: { type: string; value: string }[] = [];
     this.tiles.getAttributions(out);
-    return out
+    const html = [...new Set(out.filter((a) => a.type === "html").map((a) => a.value))];
+    let text = out
       .filter((a) => a.type === "string")
       .map((a) => a.value)
       .join(" ")
       .trim();
+    if (this.bing) {
+      // Bing zoom from the view: ~156 km/px at zoom 0 for 256 px tiles; one screen ≈ altitude.
+      const z = Math.max(1, Math.min(21, Math.round(Math.log2(40_075_016 / Math.max(this.view.alt, 50)))));
+      const credits = this.bing.credits(this.view.lat, this.view.lon, z);
+      if (this.bing.logo) html.push(`<img src="${this.bing.logo}" alt="Microsoft Bing">`);
+      // Bing's provider list carries "© Microsoft Corporation" itself.
+      text = [...credits, text].filter(Boolean).join(" · ");
+    }
+    return { text, html };
   }
 
   dispose(): void {

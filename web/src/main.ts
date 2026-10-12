@@ -14,8 +14,8 @@ import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
 import { EarthTiles } from "./render/earthTiles";
-import { GoogleAttribution } from "./ui/attribution";
-import { mapTilesKey } from "./settings";
+import { SurfaceAttribution } from "./ui/attribution";
+import { surfaceSource } from "./settings";
 import { toggleFullscreen } from "./desktop";
 import { h } from "./ui/dom";
 
@@ -208,16 +208,17 @@ async function main(): Promise<void> {
   const world = new World(engine, sim, bodies, assets, settings);
   engine.clouds = new CloudPass(assets.clouds);
   // Google 3D tiles: only with a key and the setting on (otherwise nothing is requested).
-  const attribution = new GoogleAttribution();
+  const attribution = new SurfaceAttribution();
   const syncTiles = (s: ReturnType<typeof store.get>) => {
-    const key = mapTilesKey(s);
-    const want = s.earth.tiles && key.length > 0;
-    if (want && !world.tiles) {
-      world.tiles = new EarthTiles(engine, key, s.earth.tileError);
-      engine.scene.add(world.tiles.anchor);
-    } else if (!want && world.tiles) {
+    const src = surfaceSource(s);
+    const same = (a: typeof src, b: typeof src) => JSON.stringify(a) === JSON.stringify(b);
+    if (world.tiles && !same(world.tiles.source, src)) {
       world.tiles.dispose();
       world.tiles = null;
+    }
+    if (src && !world.tiles) {
+      world.tiles = new EarthTiles(engine, src, s.earth.tileError);
+      engine.scene.add(world.tiles.anchor);
     } else if (world.tiles) {
       world.tiles.errorTarget = s.earth.tileError;
     }
@@ -390,7 +391,7 @@ async function main(): Promise<void> {
     world.update(dt);
     mapView.keysFine = sim.controls.fine;
     mapView.update(dt);
-    attribution.update(world.tiles?.attribution() ?? "", hud.root);
+    attribution.update(world.tiles ? { ...world.tiles.attributions(), google: world.tiles.google } : null, hud.root);
     engine.render(dt, world.atmo);
     hud.update(dt, world.focusName(), centerNames.get(world.centerId) ?? "?", { showFps: store.get().ui.showFps, depth: engine.depth });
   };

@@ -1,6 +1,6 @@
 // Settings screen: Graphics, Simulation, Controls, Audio, Interface.
 
-import { mapTilesKey, GRAPHICS_PRESETS, type Preset, type SettingsStore } from "../settings";
+import { ionToken, mapTilesKey, surfaceSource, GRAPHICS_PRESETS, type Preset, type SettingsStore } from "../settings";
 import { clear, h } from "./dom";
 
 type Tab = "graphics" | "earth" | "simulation" | "controls" | "audio" | "interface";
@@ -172,17 +172,21 @@ export class SettingsPanel {
         const e = s.earth;
         const keyInput = h("input", { type: "password", value: e.apiKey, placeholder: "Map Tiles API key", autocomplete: "off", spellcheck: false, class: "key-input" }) as HTMLInputElement;
         keyInput.addEventListener("change", () => up((x) => (x.earth.apiKey = keyInput.value.trim())));
+        const ionInput = h("input", { type: "password", value: e.ionToken, placeholder: "Cesium ion access token", autocomplete: "off", spellcheck: false, class: "key-input" }) as HTMLInputElement;
+        ionInput.addEventListener("change", () => up((x) => (x.earth.ionToken = ionInput.value.trim())));
         const effective = mapTilesKey(s);
         return h(
           "div",
           {},
-          this.row("Google Photorealistic 3D Tiles", this.toggle(e.tiles, (v) => up((x) => (x.earth.tiles = v))), "Streamed 3D imagery below ~1,200 km altitude"),
-          this.row("API key", keyInput, effective ? (e.apiKey ? "Using your key (stored only in this browser)" : "Using the build's key") : "No key: tiles are off and nothing is requested from Google"),
+          this.row("Streamed surface", this.toggle(e.tiles, (v) => up((x) => (x.earth.tiles = v))), "Terrain and imagery near the surface (below ~1,200 km altitude)"),
+          this.row("Source", this.select(e.source, [["auto", "Automatic"], ["ion-terrain", "Cesium World Terrain + Bing imagery (ion)"], ["ion-google", "Google 3D Tiles via Cesium ion"], ["google", "Google 3D Tiles (Maps key)"]], (v) => up((x) => (x.earth.source = v))), surfaceSource(s)?.kind ? `Active: ${surfaceSource(s)!.kind}` : "Inactive: no credentials for this source"),
+          this.row("Cesium ion token", ionInput, ionToken(s) ? (e.ionToken ? "Using your token (stored only here)" : "Using the build's token") : "None"),
+          this.row("Google Maps API key", keyInput, effective ? (e.apiKey ? "Using your key (stored only in this browser)" : "Using the build's key") : "No key: tiles are off and nothing is requested from Google"),
           this.row("Tile detail", this.select(e.tileError, [[24, "Low"], [16, "Medium"], [12, "High"], [8, "Max"]], (v) => up((x) => (x.earth.tileError = v))), "Lower error = sharper, more data"),
           h(
             "p",
             { class: "note" },
-            "Near the surface, Earth imagery and terrain come from Google Maps Platform (Map Tiles API), under Google's terms. They are streamed, never stored or pre-fetched, and used for display only. Clouds, atmosphere, the spacecraft and everything else are RocketSim's own. You need your own key with billing enabled: Google Cloud console → Map Tiles API.",
+            "Near the surface, terrain and imagery are streamed from Cesium ion (Cesium World Terrain, Bing Maps aerial) or Google Maps Platform, under their terms: never stored or pre-fetched, display only, with their attributions on screen. Clouds, atmosphere, the spacecraft and everything else are RocketSim's own. Tokens: cesium.com/ion → Access Tokens (assets:read); Google Cloud console → Map Tiles API.",
           ),
         );
       }

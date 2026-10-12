@@ -74,7 +74,7 @@ test("without a key nothing is requested from Google", async ({ page }) => {
   mirrorConsole(page);
   const google: string[] = [];
   page.on("request", (r) => /googleapis\.com/.test(r.url()) && google.push(r.url()));
-  await start(page, { tiles: true, apiKey: "", tileError: 12 });
+  await start(page, { tiles: true, source: "google", apiKey: "", tileError: 12 });
   await frames(page, 60);
   expect(google).toEqual([]);
   await expect(page.locator("#google-attrib")).toBeHidden();
@@ -92,7 +92,7 @@ test("tiles: key, session, attribution, logo and disclosure", async ({ page }) =
     if (url.includes("tile.glb")) return route.fulfill({ status: 200, contentType: "model/gltf-binary", body: glb(COPYRIGHT) });
     return route.fulfill({ status: 404, body: "" });
   });
-  await start(page, { tiles: true, apiKey: "TEST-KEY-123", tileError: 12 });
+  await start(page, { tiles: true, source: "google", apiKey: "TEST-KEY-123", tileError: 12 });
   for (let k = 0; k < 40; k++) {
     await frames(page, 10);
     if (await page.locator("#google-attrib").isVisible()) break;

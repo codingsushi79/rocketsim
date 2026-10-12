@@ -76,6 +76,12 @@ export interface ControlSettings {
 /** Google Photorealistic 3D Tiles near the surface. */
 export interface EarthSettings {
   tiles: boolean;
+  /** Near-surface source: Cesium World Terrain + Bing imagery, Google 3D Tiles via
+   *  Cesium ion, or Google 3D Tiles with a Map Tiles key. "auto" picks the first one with
+   *  credentials. */
+  source: "auto" | "ion-terrain" | "ion-google" | "google";
+  /** The player's Cesium ion access token (stored only in this browser/app). */
+  ionToken: string;
   /** The player's own Map Tiles API key (stored only in this browser). Empty: use the
    *  build-time VITE_GOOGLE_MAPS_API_KEY if any, else tiles stay off. */
   apiKey: string;
@@ -106,6 +112,24 @@ export function mapTilesKey(s: Settings): string {
   return (s.earth.apiKey || build).trim();
 }
 
+/** The Cesium ion token in effect: the player's, else the build's, else none. */
+export function ionToken(s: Settings): string {
+  const build = (import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined) ?? "";
+  return (s.earth.ionToken || build).trim();
+}
+
+/** The near-surface source to use, or null (nothing is requested). */
+export function surfaceSource(s: Settings): import("./render/earthTiles").SurfaceSource | null {
+  if (!s.earth.tiles) return null;
+  const ion = ionToken(s);
+  const key = mapTilesKey(s);
+  const want = s.earth.source;
+  if ((want === "auto" || want === "ion-terrain") && ion) return { kind: "ion-terrain", token: ion };
+  if (want === "ion-google" && ion) return { kind: "ion-google", token: ion };
+  if ((want === "auto" || want === "google") && key) return { kind: "google", key };
+  return null;
+}
+
 export function defaultSettings(): Settings {
   return {
     version: 1,
@@ -113,7 +137,7 @@ export function defaultSettings(): Settings {
     sim: { rtol: 1e-12, earthDegree: 8, thirdBody: true, harmonics: true, drag: true, srp: true, f107: 150, f107a: 150, ap: 4 },
     audio: { master: 0.8, music: 0.6, effects: 0.8 },
     ui: { hudScale: 1, showFps: false, starBoost: 1, showOrbit: true },
-    earth: { tiles: true, apiKey: "", tileError: 12 },
+    earth: { tiles: true, source: "auto", ionToken: "", apiKey: "", tileError: 12 },
     controls: {
       deadzone: 0.08,
       invertPitch: false,

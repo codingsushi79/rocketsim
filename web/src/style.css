@@ -190,3 +190,6 @@ td.key { width: 140px; color: var(--accent-2); font-family: ui-monospace, monosp
 .outcome-title { font-size: 26px; letter-spacing: 0.12em; font-weight: 300; margin-bottom: 8px; }
 .outcome.bad .outcome-title { color: #ff9b7a; }
 .outcome-detail { color: var(--muted); margin-bottom: 6px; }
+.ion-data { display: flex; gap: 10px; align-items: center; white-space: nowrap; overflow: hidden; }
+.ion-data a { color: #cfe0ff; pointer-events: auto; }
+.attrib-img { height: 18px; vertical-align: middle; }
