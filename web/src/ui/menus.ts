@@ -45,7 +45,7 @@ export class Menus {
           h("button", { id: "btn-credits", onclick: () => this.credits() }, "Credits"),
           isDesktop() ? h("button", { id: "btn-quit", onclick: () => void quitApp() }, "Quit to Desktop") : null,
         ),
-        h("div", { class: "version" }, `sim-core ${this.version} · milestone 7 build${isDesktop() ? " · desktop" : ""}`),
+        h("div", { class: "version" }, `sim-core ${this.version} · milestone 8 build${isDesktop() ? " · desktop" : ""}`),
       ),
     );
   }
