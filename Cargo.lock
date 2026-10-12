@@ -1396,6 +1396,7 @@ dependencies = [
 name = "sim-wasm"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "sim-core",
  "wasm-bindgen",
 ]
