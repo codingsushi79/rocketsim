@@ -895,8 +895,13 @@ impl Sim {
         let rcs: Vec<String> = t.rcs_duty.iter().map(|d| list(d)).collect();
         // Speeds in each reference, for the HUD speed modes.
         let speeds = self.speeds();
+        // Air-relative velocity (ICRF, the atmosphere co-rotating with the body), for the
+        // renderer's shock-layer and wake effects.
+        let v_air = self
+            .current_state()
+            .map_or(V3::ZERO, |s| self.reference_velocity_with(&s, SpeedReference::Surface));
         format!(
-            r#"{{"mass":{},"com":{},"omega":{},"tanks":{},"wheels":{},"engines":[{}],"rcs":[{}],"q":{},"heat":{},"pAmb":{},"dv":{},"burnTime":{},"desat":{},"captured":{},"dvExpended":{},"speeds":{}}}"#,
+            r#"{{"mass":{},"com":{},"omega":{},"tanks":{},"wheels":{},"engines":[{}],"rcs":[{}],"q":{},"heat":{},"pAmb":{},"dv":{},"burnTime":{},"desat":{},"captured":{},"dvExpended":{},"speeds":{},"vAir":{}}}"#,
             t.mass,
             v3j(t.com),
             v3j(t.omega_body),
@@ -913,6 +918,7 @@ impl Sim {
             t.sas_captured,
             f.dv_expended,
             list(&speeds),
+            v3j(v_air),
         )
     }
 

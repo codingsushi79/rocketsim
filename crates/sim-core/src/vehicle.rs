@@ -302,6 +302,10 @@ pub struct VehicleConfig {
     #[serde(default)]
     pub wheels: Vec<Wheel>,
     pub sas: SasConfig,
+    /// Renderer-only cockpit layout (eye point, windows, displays). Opaque to the core:
+    /// it carries no physics and is passed through unread.
+    #[serde(default)]
+    pub cabin: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

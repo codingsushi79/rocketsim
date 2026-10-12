@@ -6,7 +6,7 @@ import type { BodyRow } from "../core";
 import type { Settings } from "../settings";
 import type { Simulation } from "../sim/simulation";
 import { BODY_TINT, EarthView, GEOMETRIC_ALBEDO, GlobeBody, PlainBody, SunView } from "./bodies";
-import { RING_INNER, RING_OUTER, SaturnRings, ringProfileTexture } from "./rings";
+import { RING_INNER, RING_OUTER, RingParticles, SaturnRings, ringProfileTexture } from "./rings";
 import { OrbitCamera } from "./camera";
 import type { Engine } from "./engine";
 import { MilkyWay, PlanetPoints, StarField, lambertPhase } from "./sky";
@@ -141,6 +141,9 @@ export class World {
         if (ringed) {
           this.rings = new SaturnRings(this.ringProfile, a, c);
           engine.scene.add(this.rings.mesh);
+          engine.scene.add(this.rings.patch);
+          this.ringParticles = new RingParticles(row.gm, a, c);
+          engine.scene.add(this.ringParticles.mesh);
         }
       }
       else {
@@ -365,6 +368,11 @@ export class World {
       up = this.blend.up.clone().lerp(up, k).normalize();
       if (this.blend.t >= 1) this.blend = null;
     }
+    // Buffeting during entry (visual; amplitude from dynamic pressure).
+    const shake = this.vehicle?.entry.shake ?? 0;
+    if (shake > 0 && !this.mapMode && this.focus === FOCUS_SPACECRAFT) {
+      offset = [offset[0] + (Math.random() - 0.5) * shake, offset[1] + (Math.random() - 0.5) * shake, offset[2] + (Math.random() - 0.5) * shake];
+    }
     this.last = { offset, look: look.clone(), up: up.clone() };
     if (this.vehicle) this.spacecraft.visible = mode !== "cockpit";
     const cam = add(focusPos, offset);
@@ -415,7 +423,14 @@ export class World {
           const inv = e.view.mesh.quaternion.clone().invert();
           const sunB = vec(toSun).normalize().applyQuaternion(inv);
           const camB = e.pos.clone().negate().applyQuaternion(inv);
-          this.rings.update(sunB, irr, camB);
+          let handover = 0;
+          if (this.ringParticles && frame.length === 9) {
+            const pole = new THREE.Vector3(frame[6]!, frame[7]!, frame[8]!);
+            this.ringParticles.update(e.pos.clone().negate(), pole, s.epochTdb(), e.pos, vec(toSun).normalize(), irr);
+            if (this.ringParticles.mesh.visible) handover = this.ringParticles.handover;
+          }
+          this.rings.update(sunB, irr, camB, handover);
+          this.rings.placePatch(camB, e.pos, e.view.mesh.quaternion);
         }
         // Point source when smaller than ~1.5 px.
         const dist = len(p);
@@ -443,7 +458,9 @@ export class World {
     }
     if (att.length === 4) {
       this.spacecraft.quaternion.set(att[1]!, att[2]!, att[3]!, att[0]!);
-      this.vehicle!.update(dt, this.sim.telemetry(), s.attachedStages());
+      const tel = this.sim.telemetry();
+      this.vehicle!.update(dt, tel, s.attachedStages());
+      this.vehicle!.updateEntry(dt, tel, this.engine.camera);
     } else {
       const xb = vec(vsc).normalize();
       const zb = vec(rsc).cross(vec(vsc)).normalize();
@@ -552,6 +569,7 @@ export class World {
   private shells = new Map<number, GlobeBody>();
   private ringProfile = ringProfileTexture();
   private rings: SaturnRings | null = null;
+  private ringParticles: RingParticles | null = null;
   /** Google 3D tiles (when a key is configured and enabled). */
   tiles: EarthTiles | null = null;
 }

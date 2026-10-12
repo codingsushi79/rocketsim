@@ -79,6 +79,20 @@ export const SCENARIOS: Scenario[] = [
     massKg: 24_960,
     vehicle: RS1,
   },
+  {
+    id: "saturn-rings",
+    name: "Inside Saturn's rings",
+    description: "RS-1 in a circular orbit in Saturn's ring plane, in the outer A ring (r = 135,000 km, between the Encke and Keeler gaps). Look around: the ring particles are resolved individually nearby. Particle impacts are not modelled.",
+    epochUtc: "2026-11-01T00:00:00Z",
+    center: 699,
+    // Ring plane = Saturn's equator. ICRF elements from the IAU pole (pck00011 at 2026:
+    // α₀ = 40.579°, δ₀ = 83.536°): inclination 90° − δ₀, node α₀ + 90°.
+    altitudeM: 135_000e3 - 60_268e3,
+    inclinationDeg: 90 - 83.536,
+    raanDeg: 40.579 + 90,
+    massKg: 24_960,
+    vehicle: RS1,
+  },
 ];
 
 /** Test-only scenario: low Saturn orbit for the floating-origin jitter test. */

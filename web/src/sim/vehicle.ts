@@ -48,4 +48,6 @@ export interface Telemetry {
   dvExpended: number;
   /** Orbit, surface, target. */
   speeds: number[];
+  /** Air-relative velocity, ICRF (m/s). */
+  vAir: Vec3;
 }

@@ -222,6 +222,19 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
 - **License:** U.S. Government work, public domain.
 - **Retrieved:** 2026-10-12
 
+### UI font: IBM Plex Sans, Sans Condensed and Mono (`web/public/fonts/*.woff2`)
+- **Source:** Fontsource 5.1.0 builds, https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.1.0/ (and
+  `ibm-plex-sans-condensed`, `ibm-plex-mono`); upstream https://github.com/IBM/plex
+- **License:** SIL Open Font License 1.1 (`web/public/fonts/OFL.txt`). Copyright 2018 IBM Corp.
+- **Retrieved:** 2026-10-12
+
+### Physical references used by the renderer (no data files)
+- Ring particle sizes: Zebker, Marouf & Tyler (1985), Icarus 64:531; Cuzzi et al. (2009), *Saturn
+  from Cassini–Huygens*, ch. 15.
+- Lens: double-Gauss 50 mm (US 2,673,491; Smith, *Modern Lens Design*; Kolb et al. 1995 scaling);
+  ghost method Hullin et al. (2011), ACM TOG 30(4).
+- Incandescence: CIE 1931 colour-matching fits, Wyman, Sloan & Shirley (2013), JCGT 2(2).
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`

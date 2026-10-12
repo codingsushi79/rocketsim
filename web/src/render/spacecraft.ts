@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Telemetry, VehicleDef, Vec3 } from "../sim/vehicle";
 import { PRE_EXPOSURE } from "./units";
+import { ReentryFx, addIncandescence } from "./reentry";
 
 /** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
 const PLUME_RADIANCE_U = 0.6;
@@ -107,12 +108,16 @@ export class VehicleView {
   private time = 0;
   /** Explosion state: fireball and flying fragments (visual only). */
   private boom: { t: number; fire: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>; parts: { o: THREE.Object3D; v: THREE.Vector3; w: THREE.Vector3 }[] } | null = null;
+  /** Entry heating effects (incandescence, sheath, plasma light, buffeting). */
+  readonly entry = new ReentryFx(2);
+  private attachedKey = "";
   get exploded(): boolean {
     return this.boom !== null;
   }
 
   private constructor(private def: VehicleDef) {
     this.root.add(this.model);
+    this.root.add(this.entry.root);
   }
 
   static async load(def: VehicleDef): Promise<VehicleView> {
@@ -121,7 +126,11 @@ export class VehicleView {
     v.model.add(gltf.scene);
     gltf.scene.traverse((o) => {
       if (o.name.startsWith("stage_")) v.stageNodes.set(o.name.slice(6), o);
-      if ((o as THREE.Mesh).isMesh) o.frustumCulled = false;
+      if ((o as THREE.Mesh).isMesh) {
+        o.frustumCulled = false;
+        const m = (o as THREE.Mesh).material;
+        for (const mm of Array.isArray(m) ? m : [m]) addIncandescence(mm);
+      }
     });
     for (const e of def.engines) {
       const node = gltf.scene.getObjectByName(`engine_${e.id}`) ?? new THREE.Group();
@@ -216,6 +225,17 @@ export class VehicleView {
       const n = this.stageNodes.get(s.id);
       if (n) n.visible = (attached[i] ?? 1) !== 0;
     });
+    // Sheath size from what is still attached (the capsule alone after separation).
+    const key = Array.from(attached).join(",");
+    if (key !== this.attachedKey) {
+      this.attachedKey = key;
+      const box = new THREE.Box3();
+      for (const [, n] of this.stageNodes) if (n.visible) box.expandByObject(n);
+      if (!box.isEmpty()) {
+        const sz = box.getSize(new THREE.Vector3());
+        this.entry.setRadius(0.5 * Math.max(sz.y, sz.z, 0.5 * sz.x));
+      }
+    }
     this.engines.forEach((ev, i) => {
       const e = t.engines[i];
       if (!e) return;
@@ -244,6 +264,18 @@ export class VehicleView {
         }
       });
     });
+  }
+
+  /** Entry effects for this frame: telemetry plus the camera orientation (world → view). */
+  updateEntry(dt: number, t: Telemetry | null, camera: THREE.Camera): void {
+    if (!t || this.boom) {
+      this.entry.update(dt, 0, 0, new THREE.Vector3(), new THREE.Quaternion());
+      return;
+    }
+    const toBody = this.root.quaternion.clone().invert();
+    const flow = new THREE.Vector3(t.vAir[0], t.vAir[1], t.vAir[2]).applyQuaternion(toBody);
+    const viewFromBody = camera.quaternion.clone().invert().multiply(this.root.quaternion);
+    this.entry.update(dt, t.heat, t.q, flow, viewFromBody);
   }
 
   /** A copy of one stage's model, origin at that stage's CoM (for debris). */
