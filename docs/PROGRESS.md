@@ -8,8 +8,8 @@
 | 3 | Spacecraft propagation (n-body, harmonics, DOP853, perturbations, warp, CLI) | ✅ Done |
 | 4 | First render + **main menu and settings shell** (D11) | ✅ Done |
 | 5 | v1 spacecraft (6-DOF, tanks, engine, RCS, wheels, SAS, HUD, model) | ✅ Done |
-| 6 | Map view and maneuver nodes | ✅ Done, awaiting review |
-| 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | |
+| 6 | Map view and maneuver nodes | ✅ Done |
+| 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | ✅ Done, awaiting review (real-key check pending) |
 | 8 | Rest of the solar system | |
 | 9 | Transfer planner (Lambert, porkchop, n-body correction) | |
 | 10 | Polish (save/load/replay, audio, menu polish, performance) | |
@@ -358,4 +358,82 @@ Plan: `docs/plans/M6-map-and-maneuvers.md`.
   separation) are not executable by the autopilot yet.
 - The ground track uses texture imagery for Earth only.
 - Gravity-assist legs and Lambert targeting are M9. The data model is in place.
+
+## M7: Earth photorealism (2026-10-12)
+
+Plan, including the policy summary: `docs/plans/M7-earth-photorealism.md`.
+
+**What exists**
+- **Atmosphere with multiple scattering** (Hillaire 2020):
+  - transmittance and multiple-scattering LUTs computed on the GPU from Bruneton's Earth
+    constants, with a ground-albedo bounce;
+  - the per-pixel pass uses them for sun transmittance, the Earth's shadow and σ_s·Ψ_ms;
+  - aerial perspective stops at clouds or geometry.
+- **Volumetric clouds**, ray-marched in a cloud shell:
+  - coverage from NASA Blue Marble: Clouds (8k), mapped to optical depth with a two-stream
+    relation, so the brightness seen from orbit matches the imagery;
+  - the height profile scales with coverage (tops from 2.5 to 12 km); Worley noise erodes
+    edges near the camera and fades out where it would alias; explicit mip LOD;
+  - lighting: light march, atmospheric sun transmittance (red sunsets, Earth shadow),
+    dual-lobe HG phase, Wrenninge multiple-scattering octaves, skylight;
+  - adaptive vertical stepping; quality presets Off/32/64/128.
+- **Earth surface:**
+  - GGX + Schlick ocean glint on a Natural Earth water mask (Cox–Munk roughness);
+  - cloud shadows on the ground; city lights dimmed under cloud.
+- **Google Photorealistic 3D Tiles:**
+  - `3d-tiles-renderer` + `GoogleCloudAuthPlugin` with session auto-refresh;
+  - ECEF tiles anchored in the IERS body-fixed frame inside the floating origin, lit by the
+    same Sun in U;
+  - fully shown below 600 km camera altitude, faded out by 1,200 km, with no requests above
+    that; the global sphere is pulled 2 km below the tiles while they're shown.
+- **Policy compliance:**
+  - official outlined "Google Maps" logo at 18 px with the required clear space and
+    accessibility label;
+  - aggregated per-tile copyrights;
+  - hybrid-data disclosure line;
+  - HUD lifted so nothing overlaps;
+  - streaming only (browser HTTP cache honours Cache-Control/ETag; no service worker, no
+    store); no geometry read back.
+- **Settings → Earth:** tiles on/off, your own API key (D24), tile detail.
+- **Desktop app as the way to play (D25):**
+  - Windows portable `.exe` and installer, plus macOS `.app`;
+  - F11 fullscreen, Quit to Desktop, `npm --prefix desktop run dev`;
+  - every push to `main` refreshes the **nightly** release.
+- **Camera fix:** mouse drag and the wheel never reached the camera; a CSS specificity bug
+  since M4 let the HUD layer swallow them. Arrow keys orbit and = / − zoom, in flight and map
+  view.
+
+**Verification**
+- Playwright (12 tests, all passing): tiles compliance against a fixture tileset served in
+  place of `tile.googleapis.com`.
+  - Without a key: zero requests to Google.
+  - With a key: the key is on every request and the root's session on tile requests; the
+    attribution shows the tile copyright; the logo is 16–19 px with `aria-label="Google Maps"`
+    and overlaps no panel; the disclosure is shown.
+  - A camera test covers drag, wheel and keys in flight and map view.
+- The packaged macOS app builds (135 MB) and starts. The Windows build is in CI.
+- Frame time at 2560×1440 on the Apple M4 integrated GPU (GPU-synced):
+
+| Preset | M4 frame time | Change from M4 |
+|---|---|---|
+| Max | 23.0 ms | +4.3 ms (clouds 128 steps, multiple scattering) |
+| High | 18.7 ms | +0.7 ms |
+| Medium | 12.7 ms | +6.3 ms (clouds on) |
+
+  RTX 4070 estimate: Max ≈ 4–5 ms (5–7× the M4 GPU's shader throughput); still to be
+  measured on your machine.
+- Screenshots: `docs/screenshots/m7-*.jpg`.
+
+**Not yet verified**
+- **Real Google tiles end to end:** this needs a Map Tiles API key with billing. Put it in
+  Settings → Earth (or `web/.env.local`). The code path and compliance UI are tested with a
+  fixture tileset.
+
+**Known limitations / next**
+- The cloud field is a static snapshot (no weather or wind). There is no temporal
+  reprojection, so clouds are slightly noisy during fast camera motion at low step counts.
+- The ground isn't shadowed by individual 3D clouds near the surface (the shadow uses the
+  2D coverage).
+- Tile lighting uses the local vertical, since the imagery has baked shading. At low sun the
+  photogrammetry's own shadows remain.
 

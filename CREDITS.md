@@ -109,6 +109,35 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
   public data, Aerojet R-4D and MR-104 class thrusters, Honeywell HR16-class reaction wheels.
 - **License:** same as the project.
 
+### Cloud coverage: NASA Blue Marble: Clouds (`web/public/assets/earth_clouds_*.jpg`)
+- **Source:** NASA Visible Earth record 57747, `cloud_combined_8192.tif` (MODIS composite),
+  https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57747/cloud_combined_8192.tif
+- **Credit:** NASA Goddard Space Flight Center Image by Reto Stöckli (clouds); enhancements by Robert Simmon.
+- **License:** NASA imagery, free to use with credit to NASA.
+- **Converter:** `tools/assets/prepare_earth_layers.py`
+- **Retrieved:** 2026-10-12
+
+### Water mask: Natural Earth 5.1.2 land and lakes (`web/public/assets/earth_water_*.png`)
+- **Source:** https://github.com/nvkelso/natural-earth-vector (v5.1.2), `geojson/ne_10m_land.geojson`, `geojson/ne_10m_lakes.geojson`
+- **License:** Public domain (Natural Earth). Credit appreciated: "Made with Natural Earth."
+- **Converter:** `tools/assets/prepare_earth_layers.py` (rasterised at 4× and box-filtered)
+- **Retrieved:** 2026-10-12
+
+### Google Maps attribution logo (`web/public/assets/google/`)
+- **Source:** Google Maps Platform attribution asset package,
+  https://developers.google.com/static/maps/documentation/images/Google_Maps_Attribution_Assets.zip
+  (`GoogleMaps_Logo_WithDarkOutline`, unmodified).
+- **Use:** required attribution for Map Tiles API content. Used only as specified by the Map
+  Tiles API policies (16–19 dp, clear space, not overlapped).
+- **Retrieved:** 2026-10-12
+
+### Google Photorealistic 3D Tiles (streamed at run time, never stored)
+- **Source:** Google Maps Platform Map Tiles API, `https://tile.googleapis.com/v1/3dtiles/root.json`,
+  with the player's own API key.
+- **Terms:** Google Maps Platform Terms of Service and the Map Tiles API policies. Attribution
+  (logo plus the aggregated per-tile copyright) is shown on screen whenever tiles are visible.
+- **Renderer:** `3d-tiles-renderer` 0.5.3 (NASA-AMMOS), Apache-2.0.
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`

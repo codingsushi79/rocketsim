@@ -49,3 +49,11 @@ Decisions confirmed with the project owner. Changing any of these needs their si
 | # | Topic | Decision |
 |---|-------|----------|
 | D23 | Time warp with a 6-DOF vehicle | Step-by-step physics (50 Hz control ticks) up to 10×. Above 10× the vehicle coasts on rails, but only while no actuator is in use: body rates are zeroed and SAS directions are held kinematically (KSP-like). While thrusting, warp is capped at 10×. Approved by the owner 2026-10-11. |
+
+## M7 (2026-10-12)
+
+| # | Topic | Decision |
+|---|-------|----------|
+| D24 | Map Tiles API key | Packaged builds carry **no key**. The player enters their own in Settings → Earth, and it is stored only in that browser/app's local storage. Development uses `VITE_GOOGLE_MAPS_API_KEY` in `web/.env.local` (gitignored). With no key, tiles are off and nothing is requested from Google. Follows from the brief's "API key from an environment variable, never committed". |
+| D25 | How the game ships | **A desktop application** (Tauri v2): Windows portable `.exe` and installer, plus a macOS `.app`. They are published as the rolling "nightly" GitHub pre-release on every push to `main`, and as releases on `v*` tags. The browser build remains only for development and automated tests. Owner request, 2026-10-12. |
+
