@@ -233,7 +233,7 @@ export class World {
     // Sensible starting angles for each mode.
     if (m === "chase" || m === "locked") this.camera.setAngles(Math.PI, 0.2);
     // Cockpit: look a little up, toward the rendezvous windows above the console.
-    if (m === "cockpit") this.camera.setAngles(0, -0.25);
+    if (m === "cockpit") this.camera.setAngles(0, -0.42);
   }
 
   /** Body-fixed point on the ground under the spacecraft plus an eye height. */
@@ -277,6 +277,15 @@ export class World {
     }
     const q = this.engine.camera.quaternion.clone().invert();
     return { dirView: dir.applyQuaternion(q), angularRadius: rs, irradiance: (AU / d) ** 2, visibleCpu: vis };
+  }
+
+  private ray = new THREE.Raycaster();
+  /** A click at NDC (x, y) in the cockpit: the console button under it, if any. */
+  cockpitClick(x: number, y: number): import("./interior").CabinAction | null {
+    if (!this.cockpitActive || !this.interior) return null;
+    this.interior.root.updateMatrixWorld(true);
+    this.ray.setFromCamera(new THREE.Vector2(x, y), this.engine.camera);
+    return this.interior.pick(this.ray);
   }
 
   /** Live values for the cockpit displays. */

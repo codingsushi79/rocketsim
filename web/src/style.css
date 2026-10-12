@@ -267,3 +267,14 @@ td.key { width: 140px; color: var(--accent); font-family: var(--mono); font-size
 .attrib-img { height: 18px; vertical-align: middle; }
 .menu-buttons button.primary { background: transparent; color: var(--text); border-color: var(--rule); }
 .menu-buttons button.primary::before { color: var(--accent); }
+
+/* SAS modes on an arc around the navball: part of the instrument. */
+.navball-ring { margin-top: calc(6px * var(--hud-scale)); position: relative; width: calc(240px * var(--hud-scale)); height: calc(232px * var(--hud-scale)); display: grid; place-items: center; }
+.navball-ring .sas-btn {
+  position: absolute; left: 50%; top: 50%; width: calc(30px * var(--hud-scale)); height: calc(30px * var(--hud-scale));
+  padding: calc(5px * var(--hud-scale)); border-radius: 50%; border: 1px solid var(--rule); background: rgb(0 0 0 / 0.55);
+  transform: translate(-50%, -50%) rotate(var(--a)) translate(calc(106px * var(--hud-scale))) rotate(calc(-1 * var(--a)));
+}
+.navball-ring .sas-btn:hover:not(:disabled) { background: rgb(255 255 255 / 0.1); border-color: var(--rule-strong); }
+.navball-ring .sas-btn.on { background: rgb(255 255 255 / 0.16); border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.hud-navball .sas-flags { padding: 0; min-height: 1em; }

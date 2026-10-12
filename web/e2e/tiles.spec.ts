@@ -113,7 +113,7 @@ test("tiles: key, session, attribution, logo and disclosure", async ({ page }) =
   expect(box.height).toBeLessThanOrEqual(19);
   const overlaps = await page.evaluate((b) => {
     const hit: string[] = [];
-    for (const sel of [".hud-orbit", ".hud-prop", ".hud-navball", ".hud-sas", ".hud-top > div"]) {
+    for (const sel of [".hud-orbit", ".hud-prop", ".hud-navball", ".hud-top > div"]) {
       for (const el of document.querySelectorAll<HTMLElement>(sel)) {
         const r = el.getBoundingClientRect();
         if (r.width === 0) continue;

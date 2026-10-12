@@ -420,6 +420,24 @@ async function main(): Promise<void> {
     }
   });
 
+  // Cockpit: a click (not a drag) on the console presses the button under the cursor.
+  {
+    const cv = engine.renderer.domElement;
+    let down: [number, number] | null = null;
+    cv.addEventListener("pointerdown", (e) => (down = [e.clientX, e.clientY]));
+    cv.addEventListener("pointerup", (e) => {
+      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+      down = null;
+      const r = cv.getBoundingClientRect();
+      const act = world.cockpitClick(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
+      if (!act) return;
+      if (act.kind === "sas") sim.controls.sas = act.mode;
+      else if (act.kind === "rcs") sim.controls.rcs = !sim.controls.rcs;
+      else if (act.kind === "stage") sim.stage();
+      else if (act.kind === "map" && sim.hasVehicle) mapView.setActive(!mapView.active), hud.setMap(mapView.active);
+    });
+  }
+
   el("boot").classList.add("hidden");
 
   // Menu background: the scenario seen from afar, slowly turning.

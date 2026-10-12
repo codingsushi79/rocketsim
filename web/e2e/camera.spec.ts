@@ -93,6 +93,31 @@ test("C cycles the camera modes: chase, free, locked, cockpit, body-locked, surf
       // interior replaces the hull.
       expect(st.camToSc).toBeLessThan(6);
       expect(await page.evaluate(() => (window.__rocketsim!.world as unknown as { interior: { root: { visible: boolean } } }).interior.root.visible)).toBe(true);
+      // Console buttons: find a SAS key by ray and press it with a real mouse click.
+      await page.evaluate(() => window.__rocketsim!.camera!.setAngles(0, 0.55, true));
+      await frames(page, 10);
+      const key = await page.evaluate(() => {
+        const w = window.__rocketsim!.world as unknown as { cockpitClick(x: number, y: number): { kind: string; mode?: number } | null };
+        // Centre of the first SAS key (other than the current mode) that is on the canvas.
+        const hits = new Map<number, [number, number][]>();
+        for (let y = -0.8; y <= 0.8; y += 0.02) for (let x = -0.8; x <= 0.8; x += 0.02) {
+          const a = w.cockpitClick(x, y);
+          const onCanvas = document.elementFromPoint((innerWidth / 2) * (1 + x), (innerHeight / 2) * (1 - y))?.tagName === "CANVAS";
+          if (a && a.kind === "sas" && onCanvas && a.mode !== window.__rocketsim!.sim!.controls.sas) {
+            if (!hits.has(a.mode!)) hits.set(a.mode!, []);
+            hits.get(a.mode!)!.push([x, y]);
+          }
+        }
+        const best = [...hits.entries()].sort((p, q) => q[1].length - p[1].length)[0];
+        if (!best) return null;
+        const n = best[1].length;
+        const x = best[1].reduce((s, p) => s + p[0], 0) / n, y = best[1].reduce((s, p) => s + p[1], 0) / n;
+        return { px: (innerWidth / 2) * (1 + x), py: (innerHeight / 2) * (1 - y), mode: best[0] };
+      });
+      expect(key).not.toBeNull();
+      await page.mouse.click(key!.px, key!.py);
+      await frames(page, 2);
+      expect(await page.evaluate(() => window.__rocketsim!.sim!.controls.sas)).toBe(key!.mode);
     }
     if (st.mode === "surface") {
       // On the ground under the spacecraft (Earth: grid height + 100 m eye), 400 km below it.

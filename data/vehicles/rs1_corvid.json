@@ -771,17 +771,17 @@
     "windows": [
       {
         "name": "rendezvous left",
-        "x": 2.05,
-        "azimuth": -35,
-        "width": 0.28,
-        "height": 0.3
+        "x": 2.0,
+        "azimuth": -30,
+        "width": 0.34,
+        "height": 0.4
       },
       {
         "name": "rendezvous right",
-        "x": 2.05,
-        "azimuth": 35,
-        "width": 0.28,
-        "height": 0.3
+        "x": 2.0,
+        "azimuth": 30,
+        "width": 0.34,
+        "height": 0.4
       },
       {
         "name": "side left",

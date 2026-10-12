@@ -7,6 +7,7 @@ import { PHYSICS_WARP_MAX, SAS_MODES, SPEED_REFS, WARP_LEVELS } from "../sim/sim
 import type { VehicleDef } from "../sim/vehicle";
 import { clear, fmtDuration, fmtLength, fmtWarp, h } from "./dom";
 import { Navball } from "./navball";
+import { SAS_ICONS } from "./sasIcons";
 
 /** Bodies the target cycle (Y) steps through; −1 = none. */
 export const TARGET_CYCLE = [-1, 301, 399, 10, 499];
@@ -107,9 +108,15 @@ export class Hud {
     this.flight.classList.toggle("hidden", !def);
     if (!def) return;
     const el = (id: string, cls = "") => (this.els[id] = h("span", { class: cls, id: `hud-${id}` }));
-    const sasButtons = SAS_MODES.map((name, i) =>
-      h("button", { class: "sas-btn", "data-i": i, title: `${name} (${i === 0 ? "T" : i === 10 ? "0" : i})`, onclick: () => (this.sim.controls.sas = i) }, name),
-    );
+    // SAS modes as icon buttons on an arc around the navball (Off at the top; the rest
+    // from the upper left, down and round to the upper right).
+    const sasButtons = SAS_MODES.map((name, i) => {
+      const b = h("button", { class: "sas-btn", "data-i": i, title: `${name} (${i === 0 ? "T" : i === 10 ? "0" : i})`, "aria-label": name, onclick: () => (this.sim.controls.sas = i) });
+      b.innerHTML = SAS_ICONS[i]!;
+      const ang = i === 0 ? -90 : -150 - ((i - 1) * 240) / (SAS_MODES.length - 2);
+      b.style.setProperty("--a", `${ang}deg`);
+      return b;
+    });
     const tanks = def.tanks.map((t, i) =>
       h(
         "div",
@@ -120,13 +127,13 @@ export class Hud {
       ),
     );
     this.flight.append(
-      h("div", { class: "hud-sas" }, ...sasButtons, h("span", { class: "sas-flags" }, el("rcsflag", "flag"), el("fineflag", "flag"), el("sasflag", "flag"))),
       h(
         "div",
         { class: "hud-navball" },
         h("div", { class: "speed" }, h("button", { class: "speed-mode", onclick: () => (this.sim.controls.speedRef = (this.sim.controls.speedRef + 1) % 3) }, el("speedmode")), el("speed", "mono speed-value")),
-        this.navball.canvas,
+        h("div", { class: "navball-ring" }, this.navball.canvas, ...sasButtons),
         h("div", { class: "nav-readout mono" }, el("navread")),
+        h("span", { class: "sas-flags" }, el("rcsflag", "flag"), el("fineflag", "flag"), el("sasflag", "flag")),
         h("div", { class: "target-line" }, h("span", { class: "lbl" }, "Target "), el("target"), h("span", { class: "hint" }, "  Y")),
       ),
       h(
@@ -280,6 +287,30 @@ export class Hud {
       q: t.q,
       prop,
       met: s.utcIso().slice(11, 19) + " UTC",
+      eccentricity: o[1]!,
+      bodyRadius: (() => {
+        const sc = s.spacecraft();
+        return sc.length >= 4 ? Math.hypot(sc[1]!, sc[2]!, sc[3]!) - o[9]! : 0;
+      })(),
+      bodyName: this.bodyNames.get(s.spacecraft()[0] ?? -1) ?? "",
+      throttle: this.sim.controls.throttle,
+      sas: this.sim.controls.sas,
+      rcs: this.sim.controls.rcs,
+      node: (() => {
+        const n = this.sim.planState().plan?.nodes[0];
+        return n && n.start !== null ? { dt: n.start, dv: n.dv } : null;
+      })(),
+      target: (() => {
+        const tgt = this.sim.targetId;
+        if (tgt < 0) return null;
+        try {
+          const sc = s.spacecraft();
+          const r = s.relativeState(tgt, sc[0]!);
+          return { name: this.bodyNames.get(tgt) ?? String(tgt), dist: Math.hypot(r[0]! - sc[1]!, r[1]! - sc[2]!, r[2]! - sc[3]!) };
+        } catch {
+          return null;
+        }
+      })(),
     };
   }
 
