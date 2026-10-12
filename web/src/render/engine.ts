@@ -1,5 +1,6 @@
 // Renderer: HDR pipeline with floating origin, reversed-Z float depth (or logarithmic
-// depth as the fallback), atmosphere post-pass, auto-exposure, bloom and AgX tone mapping.
+// depth as the fallback), atmosphere post-pass, lens effects (Sun visibility, diffraction
+// spikes, ray-traced ghosts), auto-exposure, veiling glare and AgX tone mapping.
 //
 // Floating origin (spec §1): the camera always sits at the render-space origin. All
 // positions are computed in f64 (JS numbers) relative to the camera and only then
@@ -7,12 +8,13 @@
 
 import * as THREE from "three";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import type { DepthMode, GraphicsSettings } from "../settings";
 import { EXPOSURE_MAX, EXPOSURE_MIN, PRE_EXPOSURE } from "./units";
 import { AtmospherePass, type AtmosphereParams } from "./atmosphere";
 import type { CloudPass, CloudSettings } from "./clouds";
 import { QUAD_VS } from "./glsl";
+import { Glare } from "./glare";
+import { LensEffects, type SunState } from "./lens";
 
 export type ActiveDepth = "reversed" | "log" | "standard";
 
@@ -39,7 +41,11 @@ export class Engine {
   private lum: THREE.WebGLRenderTarget;
   private adapt: [THREE.WebGLRenderTarget, THREE.WebGLRenderTarget];
   private adaptIndex = 0;
-  private bloom: UnrealBloomPass;
+  private glare = new Glare();
+  private glared!: THREE.WebGLRenderTarget;
+  readonly lens = new LensEffects();
+  /** The Sun this frame (set by the world before render). */
+  sun: SunState | null = null;
   private lumQuad: FullScreenQuad;
   private adaptQuad: FullScreenQuad;
   private exposeQuad: FullScreenQuad;
@@ -92,7 +98,6 @@ export class Engine {
     this.createTargets(1, 1);
 
     this.atmosphere = new AtmospherePass();
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.35, 1.2);
 
     this.lumQuad = new FullScreenQuad(
       new THREE.ShaderMaterial({
@@ -128,6 +133,7 @@ export class Engine {
           rate: { value: 1 },
           first: { value: 1 },
           minExp: { value: EXPOSURE_MIN },
+          sunE: { value: 0 },
           maxExp: { value: EXPOSURE_MAX },
           lod: { value: Math.log2(LUM_SIZE) },
           preExposure: PRE_EXPOSURE,
@@ -135,7 +141,7 @@ export class Engine {
         vertexShader: QUAD_VS,
         fragmentShader: /* glsl */ `
           uniform sampler2D lum, prev;
-          uniform float rate, first, minExp, maxExp, lod, preExposure;
+          uniform float rate, first, minExp, maxExp, lod, preExposure, sunE;
           varying vec2 vUv;
           void main() {
             // The luminance buffer is pre-exposed: divide by preExposure for true U.
@@ -147,7 +153,14 @@ export class Engine {
             mean = max(mean, 1e-15);
             // Key: 0.18 for lit scenes; 0.012 for star-only views (a dark sky stays dark).
             float key = m.g > 0.01 ? 0.18 : 0.012;
-            float target = log2(clamp(key / mean, minExp, maxExp));
+            float ex = clamp(key / mean, minExp, maxExp);
+            // Sunlit scenes: never brighter than the "sunny 16" exposure for the local solar
+            // irradiance E (an 18 % grey card facing the Sun → 0.18), as a camera set for
+            // daylight would be. Sunlit regolith (albedo 0.12) then reads dark grey, as in
+            // real photographs, instead of being metered up to mid-grey. Applies when the
+            // lit pixels are sunlit (mean above 0.3 % of E), not to city lights at night.
+            if (sunE > 0.0 && m.g > 0.01 && mean > 0.003 * sunE) ex = min(ex, 1.0 / sunE);
+            float target = log2(ex);
             float p = texture2D(prev, vec2(0.5)).r;
             float e = first > 0.5 ? target : mix(p, target, rate);
             gl_FragColor = vec4(e, log2(mean), 1.0, 1.0); // log2(exposure), log2(mean U)
@@ -164,7 +177,8 @@ export class Engine {
           varying vec2 vUv;
           void main() {
             float e = fixedExposure > 0.0 ? fixedExposure : exp2(texture2D(exposureTex, vec2(0.5)).r);
-            gl_FragColor = vec4(texture2D(src, vUv).rgb * (e / preExposure), 1.0);
+            // Clamp to fp16 range (the solar disk can exceed it after a large exposure step).
+            gl_FragColor = vec4(min(texture2D(src, vUv).rgb * (e / preExposure), vec3(6e4)), 1.0);
           }`,
       }),
     );
@@ -206,7 +220,8 @@ export class Engine {
     this.cloudRT?.dispose();
     this.cloudRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
     this.exposed = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.bloom?.setSize(w, h);
+    this.glared?.dispose();
+    this.glared = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
   }
 
   applySettings(s: GraphicsSettings): void {
@@ -270,6 +285,10 @@ export class Engine {
     }
     this.atmosphere.render(r, this.hdr, this.composited, this.camera, this.depth, atmo, this.settings.atmosphereSteps, clouds);
 
+    // 2b. Lens: Sun visibility from the frame, then diffraction spikes and ghosts (added
+    // before metering, as on a real sensor).
+    if (this.settings.bloom) this.lens.render(r, this.composited, this.camera, this.sun, true);
+
     // 3. Auto-exposure: mean luminance → adapted exposure (GPU only, no readback).
     (this.lumQuad.material as THREE.ShaderMaterial).uniforms.src!.value = this.composited.texture;
     r.setRenderTarget(this.lum);
@@ -281,6 +300,7 @@ export class Engine {
     au.prev!.value = prev.texture;
     au.rate!.value = 1 - Math.exp(-dt * 2.5);
     au.first!.value = this.firstFrame ? 1 : 0;
+    au.sunE!.value = this.sun?.irradiance ?? 0;
     r.setRenderTarget(next);
     this.adaptQuad.render(r);
     this.adaptIndex = 1 - this.adaptIndex;
@@ -293,11 +313,12 @@ export class Engine {
     eu.fixedExposure!.value = this.fixedExposure ?? -1;
     r.setRenderTarget(this.exposed);
     this.exposeQuad.render(r);
+    let out = this.exposed;
     if (this.settings.bloom) {
-      this.bloom.renderToScreen = false;
-      this.bloom.render(r, this.exposed, this.exposed, dt, false);
+      this.glare.render(r, this.exposed, this.glared);
+      out = this.glared;
     }
-    (this.outputQuad.material as THREE.ShaderMaterial).uniforms.src!.value = this.exposed.texture;
+    (this.outputQuad.material as THREE.ShaderMaterial).uniforms.src!.value = out.texture;
     r.setRenderTarget(null);
     this.outputQuad.render(r);
 

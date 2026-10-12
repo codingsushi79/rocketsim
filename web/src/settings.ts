@@ -48,7 +48,6 @@ export interface InterfaceSettings {
   showFps: boolean;
   /** Artistic boost of star and Milky Way brightness (1 = physical). */
   starBoost: number;
-  showOrbit: boolean;
 }
 
 export interface HotasMapping {
@@ -136,7 +135,7 @@ export function defaultSettings(): Settings {
     graphics: { preset: "high", depthMode: "auto", ...GRAPHICS_PRESETS.high },
     sim: { rtol: 1e-12, earthDegree: 8, thirdBody: true, harmonics: true, drag: true, srp: true, f107: 150, f107a: 150, ap: 4 },
     audio: { master: 0.8, music: 0.6, effects: 0.8 },
-    ui: { hudScale: 1, showFps: false, starBoost: 1, showOrbit: true },
+    ui: { hudScale: 1, showFps: false, starBoost: 1 },
     earth: { tiles: true, source: "auto", ionToken: "", apiKey: "", tileError: 12 },
     controls: {
       deadzone: 0.08,

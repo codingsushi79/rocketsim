@@ -407,7 +407,6 @@ async function main(): Promise<void> {
       case "p": case "P": sim.paused = !sim.paused; break;
       case "]": world.cycleFocus(1); break;
       case "[": world.cycleFocus(-1); break;
-      case "o": case "O": store.update((s) => (s.ui.showOrbit = !s.ui.showOrbit)); break;
       case "m": case "M": if (sim.hasVehicle) mapView.setActive(!mapView.active), hud.setMap(mapView.active); break;
       case "g": case "G": mapView.toggleTrack(); break;
       case "c": case "C": {
