@@ -15,5 +15,7 @@ web/public/ephemeris/
 web/public/assets/earth_day_5400.jpg
 web/public/assets/earth_night_8192.jpg
 web/public/assets/milkyway_4096.jpg
+web/public/assets/earth_clouds_8192.jpg
+web/public/assets/earth_water_4096.png
 web/test-results/
 web/playwright-report/

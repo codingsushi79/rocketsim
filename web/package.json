@@ -18,6 +18,7 @@
     "models": "node ../tools/models/build_vehicle_glb.mjs ../data/vehicles/rs1_corvid.json public/models/rs1_corvid.glb"
   },
   "dependencies": {
+    "3d-tiles-renderer": "0.5.3",
     "three": "0.186.1"
   },
   "devDependencies": {
