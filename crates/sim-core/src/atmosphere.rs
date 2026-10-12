@@ -102,6 +102,21 @@ fn earth_density(r_bf: V3, t: Epoch, sw: &SpaceWeather) -> Option<f64> {
     Some(fmath::exp((1.0 - w) * fmath::ln(a) + w * fmath::ln(b)))
 }
 
+/// Entry interface altitude (above the mean equatorial radius), m: where the time warp
+/// stops for atmospheric flight. Earth: 120 km, NASA's conventional entry interface
+/// (e.g. Apollo and Shuttle entry analyses). Mars: 125 km (MSL/Mars 2020 EDL entry
+/// interface, ~3522 km radius). Venus 250 km and Titan 1,000 km: the tops of the density
+/// models used here. `None` without an atmosphere.
+pub fn entry_interface(body: BodyId) -> Option<f64> {
+    match body {
+        BodyId::EARTH => Some(120e3),
+        BodyId::MARS => Some(125e3),
+        BodyId::VENUS => Some(250e3),
+        BodyId::TITAN => Some(1_000e3),
+        _ => None,
+    }
+}
+
 /// Ambient static pressure, Pa, at body-fixed position `r_bf` (0 outside an
 /// atmosphere). Used for engine back-pressure.
 /// - Earth: US76 up to 86 km (0.37 Pa there). Above that, 0 is used: the error in

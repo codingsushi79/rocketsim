@@ -235,6 +235,11 @@ export class World {
     const scPos = sub(rsc, cam);
     this.spacecraft.position.set(scPos[0], scPos[1], scPos[2]);
     const att = this.vehicle ? s.attitude() : [];
+    if (this.vehicle) {
+      const o = s.outcome();
+      if ((o === "crashed" || o === "brokeup" || o === "burnedup") && !this.vehicle.exploded) this.vehicle.explode();
+      if (o === "flying" && this.vehicle.exploded) this.vehicle.reset();
+    }
     if (att.length === 4) {
       this.spacecraft.quaternion.set(att[1]!, att[2]!, att[3]!, att[0]!);
       this.vehicle!.update(dt, this.sim.telemetry(), s.attachedStages());

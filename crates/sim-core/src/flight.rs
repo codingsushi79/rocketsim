@@ -160,9 +160,22 @@ pub struct EngineState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlightStatus {
     Flying,
-    Impact { body: BodyId, speed: f64 },
-    BrokeUp { dynamic_pressure: f64 },
-    BurnedUp { heat_flux: f64 },
+    /// Ground contact at or below the lowest stage's survivable speed.
+    Landed {
+        body: BodyId,
+        speed: f64,
+    },
+    /// Ground contact faster than that: the vehicle is destroyed.
+    Crashed {
+        body: BodyId,
+        speed: f64,
+    },
+    BrokeUp {
+        dynamic_pressure: f64,
+    },
+    BurnedUp {
+        heat_flux: f64,
+    },
 }
 
 /// A jettisoned stage, handed to the caller to display or propagate.
@@ -264,8 +277,12 @@ pub struct Flight {
     last_heat: f64,
     last_p_amb: f64,
     autopilot: Option<BurnAutopilot>,
-    /// Set when on-rails warp stopped early for the autopilot (cleared by the caller).
+    /// Set when on-rails warp stopped early for the autopilot or at atmosphere entry
+    /// (cleared by the caller); `atmosphere_stop` tells which.
     pub warp_stop: bool,
+    pub atmosphere_stop: bool,
+    /// Below the entry interface at the end of the last advance (keeps warp ≤ physics).
+    in_atmo: bool,
 }
 
 /// Environment at the tick start.
@@ -354,6 +371,8 @@ impl Flight {
             last_p_amb: 0.0,
             autopilot: None,
             warp_stop: false,
+            atmosphere_stop: false,
+            in_atmo: false,
             config,
         };
         let s = ScState {
@@ -395,6 +414,7 @@ impl Flight {
         });
         self.status == FlightStatus::Flying
             && (c.active()
+                || self.in_atmo
                 || ap
                 || self.pending_stage
                 || self.desat
@@ -593,8 +613,20 @@ impl Flight {
                 }
             }
             if until.seconds_since(self.t_state) > 1e-9 {
+                // Stop warping at the atmosphere's entry interface, so the pilot can take
+                // over (and per-tick physics resumes).
+                let p = self.propagator(prop, false);
+                if self.traj.end_epoch().seconds_since(until) < 0.0 {
+                    p.extend(&mut self.traj, until.add_seconds(1.0), &[])?;
+                }
+                if let Some(t) = self.atmosphere_entry(prop, self.t_state, until) {
+                    until = t;
+                    self.warp_stop = true;
+                    self.atmosphere_stop = true;
+                }
                 self.advance_on_rails(prop, until, controls, lookahead)?;
             }
+            self.in_atmo = self.in_atmosphere(prop);
             return Ok(debris);
         }
         if !self.on_grid {
@@ -619,6 +651,7 @@ impl Flight {
                 debris.push(d);
             }
         }
+        self.in_atmo = self.in_atmosphere(prop);
         Ok(debris)
     }
 
@@ -680,6 +713,57 @@ impl Flight {
         Ok(())
     }
 
+    /// Altitude above the centre body's mean equatorial radius at `t`, and the centre.
+    fn altitude_at(&self, prop: &Propagator, t: Epoch) -> Option<(BodyId, f64)> {
+        let s = self.traj.state_at(t)?;
+        let c = s.state.frame.center;
+        let r = prop.reg.get(c)?.radii.equatorial_mean();
+        Some((c, s.state.r.norm() - r))
+    }
+
+    /// True while below the centre body's atmospheric entry interface.
+    pub fn in_atmosphere(&self, prop: &Propagator) -> bool {
+        self.altitude_at(prop, self.t_state)
+            .is_some_and(|(c, h)| atmosphere::entry_interface(c).is_some_and(|top| h < top))
+    }
+
+    /// First time in (from, to] the trajectory descends through the entry interface
+    /// (sampled at 1 s resolution after a coarse scan, then bisected to 1 ms).
+    fn atmosphere_entry(&self, prop: &Propagator, from: Epoch, to: Epoch) -> Option<Epoch> {
+        let below = |t: Epoch| {
+            self.altitude_at(prop, t)
+                .and_then(|(c, h)| atmosphere::entry_interface(c).map(|top| h < top))
+        };
+        if below(from) != Some(false) {
+            return None; // already inside, or no atmosphere here
+        }
+        let span = to.seconds_since(from);
+        // Steps no longer than 10 s: at ≤ 8 km/s, a 10 s chord can't skip a dip below 120 km
+        // that matters; finer resolution comes from the bisection.
+        let n = (span / 10.0).ceil().clamp(1.0, 1e6) as u64;
+        let mut prev = from;
+        for k in 1..=n {
+            let t = from.add_seconds(span * k as f64 / n as f64);
+            if below(t) == Some(true) {
+                let (mut lo, mut hi) = (prev, t);
+                for _ in 0..60 {
+                    if hi.seconds_since(lo) < 1e-3 {
+                        break;
+                    }
+                    let mid = lo.add_seconds(0.5 * hi.seconds_since(lo));
+                    if below(mid) == Some(true) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                return Some(hi); // first point inside (≤ 1 ms past the interface)
+            }
+            prev = t;
+        }
+        None
+    }
+
     fn check_termination(&mut self) {
         if self.status != FlightStatus::Flying {
             return;
@@ -694,7 +778,14 @@ impl Flight {
             ArcEnd::Impact { body } => {
                 let s = self.traj.end_state();
                 let speed = self.surface_speed(body, &s);
-                FlightStatus::Impact { body, speed }
+                let limit = self.config.stages[self.lowest_stage()]
+                    .aero
+                    .max_impact_speed;
+                if speed <= limit {
+                    FlightStatus::Landed { body, speed }
+                } else {
+                    FlightStatus::Crashed { body, speed }
+                }
             }
             ArcEnd::DynamicPressureLimit { q } => FlightStatus::BrokeUp {
                 dynamic_pressure: q,

@@ -14,6 +14,8 @@ import { PRE_EXPOSURE } from "./units";
 /** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
 const PLUME_RADIANCE_U = 0.6;
 const PUFF_RADIANCE_U = 0.5;
+/** Fireball core radiance, U (brighter than a sunlit hull, like burning propellant). */
+const FIREBALL_RADIANCE_U = 3.0;
 
 /** Rotation taking +X onto unit vector `d`. */
 function quatFromX(d: Vec3): THREE.Quaternion {
@@ -103,6 +105,11 @@ export class VehicleView {
   private engines: EngineView[] = [];
   private puffs: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>[][] = [];
   private time = 0;
+  /** Explosion state: fireball and flying fragments (visual only). */
+  private boom: { t: number; fire: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>; parts: { o: THREE.Object3D; v: THREE.Vector3; w: THREE.Vector3 }[] } | null = null;
+  get exploded(): boolean {
+    return this.boom !== null;
+  }
 
   private constructor(private def: VehicleDef) {
     this.root.add(this.model);
@@ -148,9 +155,61 @@ export class VehicleView {
     return v;
   }
 
+  /** Destroy the vehicle: a fireball, and the model's meshes flung apart. */
+  explode(): void {
+    if (this.boom) return;
+    const fire = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), exhaustMaterial(new THREE.Color(1.0, 0.5, 0.18), FIREBALL_RADIANCE_U));
+    fire.renderOrder = 11;
+    this.root.add(fire);
+    const parts: { o: THREE.Object3D; v: THREE.Vector3; w: THREE.Vector3 }[] = [];
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+    this.model.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.material instanceof THREE.ShaderMaterial) return;
+      const c = m.clone();
+      m.getWorldPosition(c.position);
+      this.root.worldToLocal(c.position);
+      c.quaternion.copy(m.getWorldQuaternion(new THREE.Quaternion())).premultiply(this.root.quaternion.clone().invert());
+      this.root.add(c);
+      const v = new THREE.Vector3(rnd(), rnd(), rnd()).normalize().multiplyScalar(8 + 25 * Math.abs(rnd()));
+      parts.push({ o: c, v, w: new THREE.Vector3(rnd(), rnd(), rnd()).multiplyScalar(3) });
+    });
+    this.model.visible = false;
+    this.boom = { t: 0, fire, parts };
+  }
+
+  /** Undo `explode` (mission restart). */
+  reset(): void {
+    if (!this.boom) return;
+    this.root.remove(this.boom.fire, ...this.boom.parts.map((p) => p.o));
+    this.boom.fire.geometry.dispose();
+    this.boom = null;
+    this.model.visible = true;
+  }
+
   /** Per-frame update from telemetry. `attached[i]` for `def.stages[i]`. */
   update(dt: number, t: Telemetry | null, attached: ArrayLike<number>): void {
     this.time += dt;
+    if (this.boom) {
+      // Wall-clock animation: the sim clock stops at impact.
+      const b = this.boom;
+      b.t += dt;
+      const r = 4 + 36 * (1 - Math.exp(-b.t * 2.2));
+      b.fire.scale.setScalar(r);
+      // Flash, then a slowly dimming fireball (~4 s).
+      b.fire.material.uniforms.intensity!.value = 3.0 * Math.exp(-b.t * 0.55) + 4.0 * Math.exp(-b.t * 6);
+      b.fire.material.uniforms.time!.value = this.time;
+      b.fire.visible = b.t < 10;
+      for (const p of b.parts) {
+        p.o.position.addScaledVector(p.v, dt);
+        p.v.multiplyScalar(Math.exp(-dt * 0.4));
+        p.o.rotation.x += p.w.x * dt;
+        p.o.rotation.y += p.w.y * dt;
+        p.o.rotation.z += p.w.z * dt;
+      }
+      return;
+    }
     if (!t) return;
     this.model.position.set(-t.com[0], -t.com[1], -t.com[2]);
     this.def.stages.forEach((s, i) => {

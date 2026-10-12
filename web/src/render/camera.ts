@@ -15,6 +15,8 @@ export class OrbitCamera {
   private targetPitch = this.pitch;
   private targetDistance = this.distance;
   private dragging = false;
+  invertX = false;
+  invertY = false;
   private last = { x: 0, y: 0 };
 
   constructor(el: HTMLElement) {
@@ -29,8 +31,10 @@ export class OrbitCamera {
       const dx = e.clientX - this.last.x;
       const dy = e.clientY - this.last.y;
       this.last = { x: e.clientX, y: e.clientY };
-      this.targetYaw -= dx * 0.005;
-      this.targetPitch = Math.max(-1.55, Math.min(1.55, this.targetPitch + dy * 0.005));
+      // Drag moves the camera with the pointer (drag right → orbit right, drag up → look
+      // from above); each axis can be inverted in Settings → Controls.
+      this.targetYaw += dx * 0.005 * (this.invertX ? -1 : 1);
+      this.targetPitch = Math.max(-1.55, Math.min(1.55, this.targetPitch - dy * 0.005 * (this.invertY ? -1 : 1)));
     });
     const end = (e: PointerEvent) => {
       this.dragging = false;

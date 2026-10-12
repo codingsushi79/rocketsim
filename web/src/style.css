@@ -183,3 +183,10 @@ td.key { width: 140px; color: var(--accent-2); font-family: ui-monospace, monosp
 .google-hybrid { margin-left: auto; color: #b9c4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hud.attrib-on .hud-orbit, .hud.attrib-on .hud-prop, .hud.attrib-on .hud-navball, .hud.attrib-on .hud-debug { bottom: 46px; }
 .key-input { font: inherit; color: var(--text); background: #111a2a; border: 1px solid var(--line); border-radius: 5px; padding: 0.3em 0.5em; width: 100%; font-family: ui-monospace, monospace; }
+
+/* Mission outcome (crash / landing) */
+.outcome { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 30px; text-align: center; pointer-events: auto; backdrop-filter: blur(8px); min-width: 360px; }
+.outcome.bad { border-color: rgb(255 120 90 / 0.5); }
+.outcome-title { font-size: 26px; letter-spacing: 0.12em; font-weight: 300; margin-bottom: 8px; }
+.outcome.bad .outcome-title { color: #ff9b7a; }
+.outcome-detail { color: var(--muted); margin-bottom: 6px; }

@@ -245,6 +245,15 @@ pub struct StageAero {
     pub max_dynamic_pressure: f64,
     /// Stagnation-point heat-flux limit, W/m².
     pub max_heat_flux: f64,
+    /// Highest surface-relative speed at ground contact the stage survives, m/s
+    /// (landing or splashdown); faster is a crash.
+    #[serde(default = "default_impact_speed")]
+    pub max_impact_speed: f64,
+}
+
+fn default_impact_speed() -> f64 {
+    // Typical landing-gear design touchdown limit (~3 m/s) when the data gives none.
+    3.0
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

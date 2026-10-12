@@ -45,6 +45,8 @@ export interface Scenario {
   inclinationDeg: number;
   raanDeg: number;
   massKg: number;
+  /** If set, start at apoapsis `altitudeM` of an ellipse with this periapsis altitude. */
+  periapsisAltM?: number;
   /** Fly this vehicle (6-DOF); without it, a cannonball of `massKg`. */
   vehicle?: VehicleSource;
 }
@@ -60,6 +62,19 @@ export const SCENARIOS: Scenario[] = [
     inclinationDeg: 51.6,
     // The spawn point is the ascending node; the Sun is near RA 216° on 1 Nov 2026,
     // so a node at 200° starts the mission in daylight.
+    raanDeg: 200,
+    massKg: 24_960,
+    vehicle: RS1,
+  },
+  {
+    id: "deorbit",
+    name: "Deorbit and entry",
+    description: "Half an orbit from entry: 400 km apogee, perigee 40 km, so the atmosphere takes you. Separate the service module (hold Space) before it burns up and fly the capsule in. Parachutes are not modelled yet, so the ground is not survivable.",
+    epochUtc: "2026-11-01T00:00:00Z",
+    center: 399,
+    altitudeM: 400e3,
+    periapsisAltM: 40e3,
+    inclinationDeg: 51.6,
     raanDeg: 200,
     massKg: 24_960,
     vehicle: RS1,
@@ -94,6 +109,8 @@ export class Simulation {
   private planCache: { wall: number; plan: PlanJson | null; ap: AutopilotJson | null } = { wall: -1e9, plan: null, ap: null };
   /** Target body (NAIF id) or −1. */
   targetId = -1;
+  /** Transient on-screen message. */
+  notice: { text: string; until: number } | null = null;
   private frame = 0;
 
   /** Load ephemeris for the decade of `epochUtc`, falling back to the CI subset. */
@@ -126,7 +143,8 @@ export class Simulation {
     this.applySettings(settings);
     if (sc.vehicle) {
       this.sim.loadVehicle(sc.vehicle.text);
-      this.sim.spawnVehicle(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg);
+      if (sc.periapsisAltM !== undefined) this.sim.spawnVehicleElliptic(sc.center, sc.altitudeM, sc.periapsisAltM, sc.inclinationDeg, sc.raanDeg);
+      else this.sim.spawnVehicle(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg);
       this.controls = { rotation: [0, 0, 0], translation: [0, 0, 0], throttle: 0, sas: 1, rcs: true, fine: false, speedRef: 0 };
     } else {
       this.sim.spawnCircular(sc.center, sc.altitudeM, sc.inclinationDeg, sc.raanDeg, sc.massKg);
@@ -203,9 +221,14 @@ export class Simulation {
       const dt = Math.min(chunk, want - done);
       this.sim.advance(dt);
       done += dt;
-      // The burn autopilot stopped on-rails warp before ignition: back to 1×.
-      if (this.hasVehicle && this.sim.takeWarpStop()) {
+      // Warp stopped early (autopilot ignition ahead, or atmosphere entry): back to 1×.
+      const why = this.hasVehicle ? this.sim.takeWarpStop() : "";
+      if (why) {
         this.warpIndex = 0;
+        this.notice = {
+          text: why === "atmosphere" ? "Entering the atmosphere: time warp reduced to 1× (max 10× until you leave it)" : "Burn ahead: time warp reduced to 1×",
+          until: performance.now() + 5000,
+        };
         break;
       }
       if (performance.now() - t0 > FRAME_BUDGET_MS && done < want) {

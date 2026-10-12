@@ -8,7 +8,7 @@
 use sim_core::bodies::{BodyId, BodyRegistry};
 use sim_core::constants::{ASTRONOMICAL_UNIT, G0, gm};
 use sim_core::ephemeris::Ephemeris;
-use sim_core::flight::{Controls, Flight, SasMode, engine_thrust};
+use sim_core::flight::{Controls, Flight, FlightStatus, SasMode, engine_thrust};
 use sim_core::frames::{IcrfBody, State};
 use sim_core::math::{Quat, V3, fmath};
 use sim_core::propagator::{ForceConfig, Propagator, ScState};
@@ -498,4 +498,93 @@ fn orbit_attitude_points_prograde_with_nadir_down() {
     let nadir = -s.state.r.normalized().unwrap();
     assert!(q.rotate(V3::X).max_abs_diff(v) < 1e-14);
     assert!(q.rotate(V3::Z).max_abs_diff(nadir) < 1e-14);
+}
+
+/// Elliptical orbit from 400 km apoapsis with periapsis below the surface (deorbited).
+fn deorbited() -> ScState {
+    let ra = 6_378_137.0 + 400e3;
+    let rp = 6_378_137.0 - 200e3;
+    let a = 0.5 * (ra + rp);
+    let v = (gm::EARTH * (2.0 / ra - 1.0 / a)).sqrt();
+    ScState {
+        epoch: t0(),
+        state: State::new(
+            V3::new(ra, 0.0, 0.0),
+            V3::new(0.0, v, 0.0),
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass: 1.0,
+    }
+}
+
+#[test]
+fn warp_stops_at_the_entry_interface_and_a_fast_impact_is_a_crash() {
+    let (e, reg) = (eph(), BodyRegistry::builtin());
+    let p = two_body(&e, &reg);
+    // Heat and q limits out of the way: this test is about ground contact.
+    let mut cfg = rs1();
+    for st in &mut cfg.stages {
+        st.aero.max_heat_flux = 1e15;
+        st.aero.max_dynamic_pressure = 1e15;
+    }
+    let mut f = Flight::new(cfg, &deorbited(), Quat::IDENTITY, &p).unwrap();
+    // One huge on-rails request: it must stop at 120 km, not tunnel to the ground.
+    f.advance(
+        &p,
+        t0().add_seconds(86_400.0),
+        &Controls::default(),
+        false,
+        1.0,
+    )
+    .unwrap();
+    assert!(f.warp_stop && f.atmosphere_stop);
+    let s = f.state_at(f.epoch()).unwrap();
+    let h = s.state.r.norm() - reg.get(BodyId::EARTH).unwrap().radii.equatorial_mean();
+    eprintln!(
+        "warp stopped at {:.3} km, after {:.1} s",
+        h / 1e3,
+        f.epoch().seconds_since(t0())
+    );
+    assert!((h - 120e3).abs() < 50.0, "stopped at {h} m");
+    // Inside the atmosphere the vehicle needs per-tick physics (warp capped).
+    assert!(f.needs_physics(&Controls::default()));
+    // Fly on to the ground: orbital-speed impact is a crash.
+    for _ in 0..2000 {
+        if f.status() != FlightStatus::Flying {
+            break;
+        }
+        let t = f.epoch().add_seconds(5.0);
+        f.advance(&p, t, &Controls::default(), true, 0.0).unwrap();
+    }
+    match f.status() {
+        FlightStatus::Crashed { speed, .. } => assert!(speed > 1000.0, "{speed}"),
+        s => panic!("expected a crash, got {s:?}"),
+    }
+}
+
+#[test]
+fn an_impact_under_the_stage_limit_is_a_landing() {
+    let (e, reg) = (eph(), BodyRegistry::builtin());
+    let p = two_body(&e, &reg);
+    let mut cfg = rs1();
+    for st in &mut cfg.stages {
+        st.aero.max_impact_speed = 1e5;
+        st.aero.max_heat_flux = 1e15;
+        st.aero.max_dynamic_pressure = 1e15;
+    }
+    let mut f = Flight::new(cfg, &deorbited(), Quat::IDENTITY, &p).unwrap();
+    for _ in 0..4000 {
+        if f.status() != FlightStatus::Flying {
+            break;
+        }
+        let t = f.epoch().add_seconds(5.0);
+        f.advance(&p, t, &Controls::default(), true, 0.0).unwrap();
+    }
+    assert!(
+        matches!(f.status(), FlightStatus::Landed { .. }),
+        "{:?}",
+        f.status()
+    );
 }

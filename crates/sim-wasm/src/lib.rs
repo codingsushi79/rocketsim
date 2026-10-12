@@ -117,7 +117,8 @@ pub struct Sim {
     plan_dirty: bool,
     /// The burn being executed by the autopilot and the plan it came from.
     execution: Option<Execution>,
-    warp_stopped: bool,
+    /// Why on-rails warp stopped early ("" if it didn't): "autopilot" or "atmosphere".
+    warp_stopped: &'static str,
     debris: Vec<(Debris, Trajectory)>,
 }
 
@@ -153,7 +154,7 @@ impl Sim {
             plan_pred: None,
             plan_dirty: false,
             execution: None,
-            warp_stopped: false,
+            warp_stopped: "",
             debris: Vec::new(),
         }
     }
@@ -361,7 +362,17 @@ impl Sim {
         if let Some(f) = &self.flight {
             return match f.status() {
                 FlightStatus::Flying => String::new(),
-                FlightStatus::Impact { speed, .. } => format!("Impact at {speed:.1} m/s"),
+                FlightStatus::Landed { body, speed } => format!(
+                    "{} at {speed:.1} m/s",
+                    if body == BodyId::EARTH {
+                        "Touchdown"
+                    } else {
+                        "Landed"
+                    }
+                ),
+                FlightStatus::Crashed { speed, .. } => {
+                    format!("Vehicle destroyed: ground impact at {speed:.0} m/s")
+                }
                 FlightStatus::BrokeUp { dynamic_pressure } => format!(
                     "Vehicle broke up: dynamic pressure {:.1} kPa",
                     dynamic_pressure / 1e3
@@ -508,9 +519,14 @@ impl Sim {
         };
         if f.warp_stop {
             f.warp_stop = false;
-            self.warp_stopped = true;
+            self.warp_stopped = if f.atmosphere_stop {
+                "atmosphere"
+            } else {
+                "autopilot"
+            };
+            f.atmosphere_stop = false;
         }
-        let stopped_early = self.warp_stopped && f.epoch().seconds_since(target) < 0.0;
+        let stopped_early = !self.warp_stopped.is_empty() && f.epoch().seconds_since(target) < 0.0;
         match res {
             Ok(debris) => {
                 for d in debris {
@@ -670,16 +686,26 @@ impl Sim {
         inc_deg: f64,
         raan_deg: f64,
     ) -> Result<(), JsError> {
-        let cfg = self
-            .vehicle
-            .clone()
-            .ok_or_else(|| JsError::new("no vehicle loaded"))?;
+        if self.vehicle.is_none() {
+            return Err(JsError::new("no vehicle loaded"));
+        }
         self.spawn_circular(center, alt_m, inc_deg, raan_deg, 1.0)?;
         let s = self
             .traj
             .as_ref()
             .and_then(|t| t.state_at(self.epoch))
             .ok_or_else(|| JsError::new("spawn failed"))?;
+        self.start_flight(&s)
+    }
+}
+
+impl Sim {
+    fn start_flight(&mut self, s: &ScState) -> Result<(), JsError> {
+        let cfg = self
+            .vehicle
+            .clone()
+            .ok_or_else(|| JsError::new("no vehicle loaded"))?;
+        let s = *s;
         let q = flight::orbit_attitude(s.state.r, s.state.v);
         let f = Flight::new(cfg, &s, q, &self.propagator()).map_err(js_err)?;
         self.flight = Some(f);
@@ -692,6 +718,50 @@ impl Sim {
         };
         self.update_prediction();
         Ok(())
+    }
+}
+
+#[wasm_bindgen]
+impl Sim {
+    /// Like `spawnVehicle`, on an ellipse with the given apoapsis and periapsis altitudes
+    /// (above the mean equatorial radius), starting at apoapsis.
+    #[wasm_bindgen(js_name = spawnVehicleElliptic)]
+    pub fn spawn_vehicle_elliptic(
+        &mut self,
+        center: i32,
+        apo_alt_m: f64,
+        peri_alt_m: f64,
+        inc_deg: f64,
+        raan_deg: f64,
+    ) -> Result<(), JsError> {
+        let c = BodyId(center);
+        let body = self
+            .reg
+            .get(c)
+            .ok_or_else(|| JsError::new("unknown center body"))?;
+        let r0 = body.radii.equatorial_mean();
+        let (ra, rp) = (r0 + apo_alt_m, r0 + peri_alt_m);
+        if !(rp > 0.0 && ra >= rp) {
+            return Err(JsError::new("need 0 < periapsis radius ≤ apoapsis radius"));
+        }
+        let a = 0.5 * (ra + rp);
+        let e = (ra - rp) / (ra + rp);
+        let el = Elements {
+            p: a * (1.0 - e * e),
+            a,
+            e,
+            i: inc_deg.to_radians(),
+            raan: raan_deg.to_radians(),
+            argp: 0.0,
+            nu: core::f64::consts::PI,
+        };
+        let (rv, vv) = el.to_state(body.gm);
+        let s = ScState {
+            epoch: self.epoch,
+            state: State::new(rv, vv, IcrfBody { center: c }),
+            mass: 1.0,
+        };
+        self.start_flight(&s)
     }
 
     /// Pilot inputs for the coming ticks. `sas`: 0 off, 1 hold, 2 prograde,
@@ -1218,10 +1288,23 @@ impl Sim {
         self.execution = None;
     }
 
-    /// True once after on-rails warp stopped for an armed burn.
+    /// Once, after on-rails warp stopped early: the reason ("autopilot" or
+    /// "atmosphere"), else "".
     #[wasm_bindgen(js_name = takeWarpStop)]
-    pub fn take_warp_stop(&mut self) -> bool {
-        core::mem::take(&mut self.warp_stopped)
+    pub fn take_warp_stop(&mut self) -> String {
+        core::mem::take(&mut self.warp_stopped).to_string()
+    }
+
+    /// Flight outcome: "flying", "landed", "crashed", "brokeup" or "burnedup".
+    pub fn outcome(&self) -> String {
+        match self.flight.as_ref().map(|f| f.status()) {
+            None | Some(FlightStatus::Flying) => "flying",
+            Some(FlightStatus::Landed { .. }) => "landed",
+            Some(FlightStatus::Crashed { .. }) => "crashed",
+            Some(FlightStatus::BrokeUp { .. }) => "brokeup",
+            Some(FlightStatus::BurnedUp { .. }) => "burnedup",
+        }
+        .into()
     }
 
     /// Autopilot state and, after the burn, the planned-vs-actual report (JSON).

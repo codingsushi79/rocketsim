@@ -67,6 +67,9 @@ export interface ControlSettings {
   /** Stick deadzone, fraction of full deflection. */
   deadzone: number;
   invertPitch: boolean;
+  /** Camera drag direction. */
+  invertCameraX: boolean;
+  invertCameraY: boolean;
   hotas: HotasMapping;
 }
 
@@ -114,6 +117,8 @@ export function defaultSettings(): Settings {
     controls: {
       deadzone: 0.08,
       invertPitch: false,
+      invertCameraX: false,
+      invertCameraY: false,
       hotas: { enabled: false, padIndex: 0, roll: 0, pitch: 1, yaw: 5, throttle: 2, invertThrottle: true },
     },
   };

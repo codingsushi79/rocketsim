@@ -57,7 +57,7 @@ test("mouse and keyboard move the camera in flight and map view", async ({ page 
     await page.keyboard.up("Equal");
     await frames(page, 20);
     const d = await cam(page);
-    expect(d.yaw, `${view}: arrow key`).toBeLessThan(c.yaw - 0.2);
+    expect(d.yaw, `${view}: arrow key`).toBeLessThan(c.yaw - 0.2); // left arrow = drag left
     expect(d.distance, `${view}: = key`).toBeLessThan(c.distance * 0.8);
   }
 });

@@ -300,9 +300,19 @@ async function main(): Promise<void> {
     },
     core.version,
   );
+  hud.onRestart = () => {
+    if (sim.scenario) void menus.actions.startMission(sim.scenario);
+  };
+  hud.onMainMenu = () => menus.actions.toMainMenu();
   const mapView = new MapView(engine, world, sim, bodies);
   ui.append(mapView.overlay, mapView.panel, mapView.track, menus.root, hud.root, attribution.root);
+  const syncCamera = (s: ReturnType<typeof store.get>) => {
+    world.camera.invertX = s.controls.invertCameraX;
+    world.camera.invertY = s.controls.invertCameraY;
+  };
+  syncCamera(settings);
   store.subscribe((s) => {
+    syncCamera(s);
     syncTiles(s);
     engine.applySettings(s.graphics);
     world.applySettings(s, assets);
@@ -368,7 +378,7 @@ async function main(): Promise<void> {
       const k = (c: string) => (camKeys.has(c) ? 1 : 0);
       const rot = 1.2 * dt;
       const yaw = (k("ArrowRight") - k("ArrowLeft")) * rot;
-      const pitch = (k("ArrowUp") - k("ArrowDown")) * rot;
+      const pitch = (k("ArrowDown") - k("ArrowUp")) * rot;
       const zin = k("Equal") + k("NumpadAdd") + k("PageUp");
       const zout = k("Minus") + k("NumpadSubtract") + k("PageDown");
       const zoom = Math.exp((zout - zin) * 1.8 * dt);

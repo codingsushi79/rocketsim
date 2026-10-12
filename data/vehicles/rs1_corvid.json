@@ -14,7 +14,8 @@
         "srp_area": 30.0,
         "nose_radius": 1.95,
         "max_dynamic_pressure": 35000.0,
-        "max_heat_flux": 150000.0
+        "max_heat_flux": 150000.0,
+        "max_impact_speed": 2.0
       }
     },
     {
@@ -28,7 +29,8 @@
         "srp_area": 8.86,
         "nose_radius": 4.69,
         "max_dynamic_pressure": 120000.0,
-        "max_heat_flux": 6000000.0
+        "max_heat_flux": 6000000.0,
+        "max_impact_speed": 12.0
       }
     }
   ],

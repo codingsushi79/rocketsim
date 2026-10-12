@@ -151,6 +151,8 @@ export class SettingsPanel {
           {},
           this.row("Stick deadzone", this.slider(c.deadzone, 0, 0.3, 0.01, (v) => up((x) => (x.controls.deadzone = v)), (v) => `${Math.round(v * 100)}%`)),
           this.row("Invert pitch", this.toggle(c.invertPitch, (v) => up((x) => (x.controls.invertPitch = v)))),
+          this.row("Invert camera horizontal", this.toggle(c.invertCameraX, (v) => up((x) => (x.controls.invertCameraX = v)))),
+          this.row("Invert camera vertical", this.toggle(c.invertCameraY, (v) => up((x) => (x.controls.invertCameraY = v)))),
           h("p", { class: "note" }, pads.length ? `Detected: ${pads.map((p) => `#${p.index} ${p.id} (${p.mapping || "generic"})`).join(" · ")}` : "No gamepad detected: press a button on it, then reopen this tab. Standard gamepads work without setup: left stick pitch/yaw, bumpers roll, right stick and d-pad translate, triggers throttle, A stage (hold), B SAS, X RCS, Y speed reference."),
           this.row("HOTAS / joystick", this.toggle(c.hotas.enabled, (v) => (up((x) => (x.controls.hotas.enabled = v)), this.draw())), "Map a non-standard device's axes"),
           ...(c.hotas.enabled

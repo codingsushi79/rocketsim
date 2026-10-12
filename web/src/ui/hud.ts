@@ -61,6 +61,32 @@ export class Hud {
       el("status", "hud-status"),
       el("debug", "hud-debug hidden mono"),
       this.flight,
+      this.outcomeEl,
+    );
+  }
+
+  private outcomeEl = h("div", { class: "outcome hidden", id: "outcome" });
+  private outcomeShown = "";
+  /** Called by the outcome overlay's buttons. */
+  onRestart: () => void = () => {};
+  onMainMenu: () => void = () => {};
+
+  /** Crash/landing overlay. */
+  private updateOutcome(): void {
+    const o = this.sim.hasVehicle ? this.sim.sim.outcome() : "flying";
+    if (o === this.outcomeShown) return;
+    this.outcomeShown = o;
+    clear(this.outcomeEl);
+    this.outcomeEl.classList.toggle("hidden", o === "flying");
+    if (o === "flying") return;
+    const bad = o !== "landed";
+    const titles: Record<string, string> = { landed: "Touchdown", crashed: "Vehicle destroyed", brokeup: "Vehicle broke up", burnedup: "Vehicle burned up" };
+    const title = titles[o] ?? o;
+    this.outcomeEl.classList.toggle("bad", bad);
+    this.outcomeEl.append(
+      h("div", { class: "outcome-title" }, title),
+      h("div", { class: "outcome-detail" }, this.sim.sim.status()),
+      h("div", { class: "menu-footer" }, h("button", { class: "primary", id: "btn-restart", onclick: () => this.onRestart() }, "Restart mission"), h("button", { onclick: () => this.onMainMenu() }, "Main menu")),
     );
   }
 
@@ -207,7 +233,9 @@ export class Hud {
     const tgt = this.sim.targetId;
     E.target!.textContent = tgt < 0 ? "none" : (this.bodyNames.get(tgt) ?? String(tgt));
     const warns: string[] = [];
-    if (this.sim.warpCapped) warns.push(`Warp limited to ${PHYSICS_WARP_MAX}× while the vehicle is under control`);
+    const n = this.sim.notice;
+    if (n && performance.now() < n.until) warns.push(n.text);
+    if (this.sim.warpCapped) warns.push(`Warp limited to ${PHYSICS_WARP_MAX}× (vehicle under control or in the atmosphere)`);
     if (t.q > 500) warns.push(`Dynamic pressure ${(t.q / 1000).toFixed(1)} kPa`);
     if (t.heat > 5000) warns.push(`Heat flux ${(t.heat / 1000).toFixed(0)} kW/m²`);
     if (e?.flameout) warns.push("Engine flameout");
@@ -252,6 +280,7 @@ export class Hud {
       this.els.per!.textContent = fmtDuration(o[8]!);
     }
     this.updateFlight();
+    this.updateOutcome();
     const status = s.status();
     this.els.status!.textContent = status ? `⚠ ${status}` : "";
 

@@ -15,7 +15,7 @@ export interface MenuActions {
 export class Menus {
   readonly root: HTMLElement;
 
-  constructor(private actions: MenuActions, private version: string) {
+  constructor(readonly actions: MenuActions, private version: string) {
     this.root = h("div", { class: "menu-root", id: "menu" });
   }
 
