@@ -111,6 +111,9 @@ export class VehicleView {
   /** Entry heating effects (incandescence, sheath, plasma light, buffeting). */
   readonly entry = new ReentryFx(2);
   private attachedKey = "";
+  get cabin(): VehicleDef["cabin"] {
+    return this.def.cabin;
+  }
   get exploded(): boolean {
     return this.boom !== null;
   }

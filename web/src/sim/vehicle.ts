@@ -16,6 +16,8 @@ export interface VehicleDef {
   engines: { id: string; stage: string; position: Vec3; direction: Vec3; thrust_vac: number; isp_vac: number; ignitions: number }[];
   rcs: { id: string; stage: string; thrust_vac: number; thrusters: { position: Vec3; direction: Vec3 }[] }[];
   wheels: { id: string; stage: string; max_momentum: number }[];
+  /** Renderer-only cockpit layout. */
+  cabin?: import("../render/interior").CabinDef;
 }
 
 export interface VehicleSource {

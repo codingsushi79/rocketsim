@@ -1,6 +1,7 @@
 // In-flight HUD: clocks, time warp, orbit readout, focus, debug overlay, and for a
 // flown vehicle the navball, speed modes, SAS, engine, Δv, propellant and wheels.
 
+import type { CabinData } from "../render/interior";
 import type { Simulation } from "../sim/simulation";
 import { PHYSICS_WARP_MAX, SAS_MODES, SPEED_REFS, WARP_LEVELS } from "../sim/simulation";
 import type { VehicleDef } from "../sim/vehicle";
@@ -254,6 +255,32 @@ export class Hud {
 
   setScale(s: number): void {
     this.root.style.setProperty("--hud-scale", String(s));
+  }
+
+  /** Values for the cockpit displays (the same sources as the HUD). */
+  cabinData(): CabinData | null {
+    const s = this.sim.sim;
+    const o = s.orbitInfo();
+    const t = this.sim.telemetry();
+    if (o.length < 11 || !t) return null;
+    const def = this.sim.scenario?.vehicle?.def;
+    const prop = (def?.tanks ?? []).map((k, i) => ({ label: k.id.toUpperCase().replace(/_/g, " ").slice(0, 8), frac: (t.tanks[i] ?? 0) / Math.max(k.capacity, 1e-9) }));
+    return {
+      pitch: this.navball.pitch,
+      roll: this.navball.roll,
+      heading: this.navball.heading,
+      altitude: o[9]!,
+      speed: o[10]!,
+      apoapsis: o[7]!,
+      periapsis: o[6]!,
+      inclination: (o[2]! * 180) / Math.PI,
+      dv: t.dv,
+      mass: t.mass,
+      heat: t.heat,
+      q: t.q,
+      prop,
+      met: s.utcIso().slice(11, 19) + " UTC",
+    };
   }
 
   update(dt: number, focusName: string, centerName: string, extra: { showFps: boolean; exposure?: string; depth: string }): void {

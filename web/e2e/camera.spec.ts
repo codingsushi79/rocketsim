@@ -89,11 +89,10 @@ test("C cycles the camera modes: chase, free, locked, cockpit, body-locked, surf
       { free: "Free", locked: "Locked", cockpit: "Cockpit", body: "Body-locked", surface: "Surface", chase: "Chase" }[st.mode]!,
     );
     if (st.mode === "cockpit") {
-      // Eye inside the crew module, a few metres from the CoM; the window frame is shown.
+      // Eye inside the crew module (vehicle data), a few metres from the CoM; the
+      // interior replaces the hull.
       expect(st.camToSc).toBeLessThan(6);
-      await expect(page.locator("#cockpit-frame")).toBeVisible();
-    } else {
-      await expect(page.locator("#cockpit-frame")).toBeHidden();
+      expect(await page.evaluate(() => (window.__rocketsim!.world as unknown as { interior: { root: { visible: boolean } } }).interior.root.visible)).toBe(true);
     }
     if (st.mode === "surface") {
       // On the ground under the spacecraft (Earth: grid height + 100 m eye), 400 km below it.

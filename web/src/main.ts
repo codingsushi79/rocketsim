@@ -420,11 +420,6 @@ async function main(): Promise<void> {
     }
   });
 
-  // Cockpit placeholder: a window frame over the view (no interior model yet).
-  const cockpitFrame = document.createElement("div");
-  cockpitFrame.id = "cockpit-frame";
-  el("ui").before(cockpitFrame); // above the canvas, under the HUD
-
   el("boot").classList.add("hidden");
 
   // Menu background: the scenario seen from afar, slowly turning.
@@ -450,7 +445,7 @@ async function main(): Promise<void> {
     if (inGame || testScene) sim.tick(dt);
     else world.camera.spin(dt * 0.02);
     world.update(dt);
-    cockpitFrame.classList.toggle("on", inGame && !mapView.active && world.focus === FOCUS_SPACECRAFT && world.cameraMode === "cockpit");
+    if (world.cameraMode === "cockpit") world.setCabinData(hud.cabinData());
     mapView.keysFine = sim.controls.fine;
     mapView.update(dt);
     attribution.update(world.tiles ? { ...world.tiles.attributions(), google: world.tiles.google } : null, hud.root);
