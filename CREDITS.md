@@ -187,6 +187,30 @@ Used offline by `tools/ephem-build` to produce the shipped `.rseph` Chebyshev fi
   Reddy et al. 2012).
 - **Retrieved:** 2026-10-12
 
+### Jupiter map: Cassini ISS PIA07782 (`web/public/assets/jupiter_2048.jpg`)
+- **Source:** https://assets.science.nasa.gov/content/dam/science/psd/photojournal/pia/pia07/pia07782/PIA07782.jpg
+  (NASA Photojournal, "Cassini's Best Maps of Jupiter", simple cylindrical, 3601 × 1801).
+- **License:** NASA/JPL/Space Science Institute imagery, public domain in the U.S. (credit
+  NASA/JPL/Space Science Institute).
+- **Processing:** `tools/assets/prepare_globes.py` (crop to 3600 × 1800, resize, albedo gain).
+- **Retrieved:** 2026-10-12
+
+### Saturn, Uranus, Neptune and Venus cloud maps: Solar System Scope (`web/public/assets/{saturn_2048,uranus_1024,neptune_1024,venus_clouds_1024}.jpg`)
+- **Source:** https://www.solarsystemscope.com/textures/ (`2k_saturn.jpg`, `2k_uranus.jpg`,
+  `2k_neptune.jpg`, `2k_venus_atmosphere.jpg`).
+- **License:** Creative Commons Attribution 4.0 International (CC BY 4.0). Artist composites
+  based on NASA imagery (no public global Cassini map of Saturn exists).
+- **Attribution:** "Textures: Solar System Scope (solarsystemscope.com), CC BY 4.0." Modified:
+  resized and albedo-scaled by `tools/assets/prepare_globes.py`.
+- **Retrieved:** 2026-10-12
+
+### Saturn ring profile (`web/src/render/rings.ts`)
+- **Source:** NASA NSSDC Saturnian Rings Fact Sheet,
+  https://nssdc.gsfc.nasa.gov/planetary/factsheet/satringfact.html (radii, optical-depth and
+  albedo ranges). The profile shape within each range is an approximation.
+- **License:** U.S. Government work, public domain.
+- **Retrieved:** 2026-10-12
+
 ## Reference software (test fixtures only; not shipped)
 
 ### ERFA via pyerfa: `crates/sim-core/tests/fixtures/time_erfa.csv`

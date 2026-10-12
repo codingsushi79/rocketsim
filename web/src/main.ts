@@ -14,7 +14,7 @@ import { VehicleView } from "./render/spacecraft";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
 import { loadHeightGrid, type HeightGrid } from "./render/planetSurface";
-import type { SurfaceDef } from "./render/world";
+import type { GlobeDef, SurfaceDef } from "./render/world";
 import { EarthTiles } from "./render/earthTiles";
 import { SurfaceAttribution } from "./ui/attribution";
 import { surfaceSource } from "./settings";
@@ -98,6 +98,19 @@ async function loadAssets(quality: "standard" | "high", status: (s: string) => v
       }
     }),
   );
+  const globeDefs = (await fetch("assets/globes.json").then((r) => r.json())) as Record<string, GlobeDef>;
+  const globes = new Map<number, { def: GlobeDef; base: THREE.Texture }>();
+  await Promise.all(
+    Object.entries(globeDefs).map(async ([id, def]) => {
+      try {
+        const base = await loadTexture(def.base);
+        base.colorSpace = THREE.SRGBColorSpace;
+        globes.set(Number(id), { def, base });
+      } catch (e) {
+        console.warn(`globe ${def.name}: ${String(e)}`);
+      }
+    }),
+  );
   const [day, night, milkyWay, water, clouds] = await Promise.all([
     pick("assets/earth_day_5400.jpg", "assets/earth_day_2048.jpg"),
     pick("assets/earth_night_8192.jpg", "assets/earth_night_2048.jpg"),
@@ -107,7 +120,7 @@ async function loadAssets(quality: "standard" | "high", status: (s: string) => v
   ]);
   status("Loading star catalog…");
   const stars = await loadStars("assets/stars_hip_v8.bin");
-  return { day, night, milkyWay, water, clouds, surfaces, terrain, terrainBytes, stars };
+  return { day, night, milkyWay, water, clouds, surfaces, globes, terrain, terrainBytes, stars };
 }
 
 function makeTestHooks(engine: Engine, step: (dt: number) => void): TestHooks {

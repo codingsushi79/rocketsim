@@ -3,6 +3,7 @@
 // so the ground lines up with the physics.
 
 import * as THREE from "three";
+import { RING_GLSL } from "./rings";
 import { PRE_EXPOSURE, SUN_RADIANCE_U } from "./units";
 
 /** Lat/lon ellipsoid in the body-fixed frame. UV: u = (lon + 180°)/360°,
@@ -193,6 +194,98 @@ export class PlainBody {
     this.mat.uniforms.sunDir!.value.copy(dir);
     this.mat.uniforms.sunE!.value = irradiance;
   }
+}
+
+/** A whole-globe texture (gas giants, Venus's cloud deck, Titan's haze), Lambertian with
+ *  the albedo gain from `tools/assets/prepare_globes.py`. Optionally shadowed by rings.
+ *  `shell` lifts the rendered surface above the reference ellipsoid (cloud tops); with the
+ *  camera below the shell it collapses onto the surface and hides. */
+export class GlobeBody {
+  readonly mesh: THREE.Mesh;
+  private mat: THREE.ShaderMaterial;
+  private sunB = new THREE.Vector3();
+  private q = new THREE.Quaternion();
+
+  constructor(
+    map: THREE.Texture,
+    gain: number,
+    readonly radii: [number, number, number],
+    readonly shell: number,
+    segments: number,
+    rings: THREE.Texture | null = null,
+    ringRange: [number, number] = [0, 0],
+  ) {
+    const [a, b, c] = radii;
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: map },
+        gain: { value: gain },
+        sunDir: { value: new THREE.Vector3(1, 0, 0) },
+        sunB: { value: this.sunB },
+        sunE: { value: 1 },
+        ringMap: { value: rings },
+        ringRange: { value: new THREE.Vector2(...ringRange) },
+        preExposure: PRE_EXPOSURE,
+      },
+      defines: rings ? { RINGS: 1 } : {},
+      vertexShader: /* glsl */ `
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vPosB;
+        void main() {
+          vUv = uv;
+          vPosB = position;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          #include <logdepthbuf_vertex>
+        }`,
+      fragmentShader: /* glsl */ `
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        #ifdef RINGS
+        ${RING_GLSL}
+        #endif
+        uniform sampler2D map;
+        uniform vec3 sunDir, sunB;
+        uniform float sunE, gain, preExposure;
+        varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vPosB;
+        void main() {
+          #include <logdepthbuf_fragment>
+          vec3 albedo = texture2D(map, vUv).rgb * gain;
+          float ndl = max(dot(normalize(vNormalW), sunDir), 0.0);
+          #ifdef RINGS
+          ndl *= ringShadow(vPosB, sunB);
+          #endif
+          gl_FragColor = vec4(albedo * sunE * ndl * preExposure, 1.0);
+        }`,
+    });
+    this.mesh = new THREE.Mesh(ellipsoidGeometry(a + shell, b + shell, c + shell, segments, segments / 2), this.mat);
+    this.mesh.frustumCulled = false;
+  }
+
+  setSun(dir: THREE.Vector3, irradiance: number): void {
+    this.mat.uniforms.sunDir!.value.copy(dir);
+    this.mat.uniforms.sunE!.value = irradiance;
+    // Body-fixed Sun direction for the ring shadow (the quaternion is set before this).
+    this.sunB.copy(dir).applyQuaternion(this.q.copy(this.mesh.quaternion).invert());
+  }
+
+  /** Hide the shell when the camera (distance from the centre) is below it. */
+  setCameraDistance(d: number): void {
+    if (this.shell > 0) this.mesh.visible = this.mesh.visible && d > this.radii[0] + this.shell;
+  }
+}
+
+/** A 1×1 texture of a linear colour (for untextured globes such as Titan's haze). */
+export function solidTexture(r: number, g: number, b: number): THREE.DataTexture {
+  const t = new THREE.DataTexture(new Uint8Array([r * 255, g * 255, b * 255, 255]), 1, 1);
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
 }
 
 /** The Sun: a disk of physical radiance (≈46,240 U; bloom does the glare). */

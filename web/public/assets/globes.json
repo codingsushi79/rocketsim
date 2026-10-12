@@ -1,0 +1,44 @@
+{
+ "599": {
+  "name": "jupiter",
+  "base": "assets/jupiter_2048.jpg",
+  "gain": 1.6625,
+  "attribution": "Jupiter: NASA/JPL/Space Science Institute (Cassini ISS, PIA07782)",
+  "shell": 0.0
+ },
+ "699": {
+  "name": "saturn",
+  "base": "assets/saturn_2048.jpg",
+  "gain": 0.956,
+  "attribution": "Saturn: Solar System Scope (CC BY 4.0), from NASA imagery",
+  "shell": 0.0
+ },
+ "799": {
+  "name": "uranus",
+  "base": "assets/uranus_1024.jpg",
+  "gain": 0.9203,
+  "attribution": "Uranus: Solar System Scope (CC BY 4.0), from NASA imagery",
+  "shell": 0.0
+ },
+ "899": {
+  "name": "neptune",
+  "base": "assets/neptune_1024.jpg",
+  "gain": 2.4829,
+  "attribution": "Neptune: Solar System Scope (CC BY 4.0), from NASA imagery",
+  "shell": 0.0
+ },
+ "606": {
+  "name": "titan_haze",
+  "base": "assets/titan_haze_8.jpg",
+  "gain": 0.5836,
+  "attribution": "Titan haze: uniform colour (no map)",
+  "shell": 100000.0
+ },
+ "299": {
+  "name": "venus_clouds",
+  "base": "assets/venus_clouds_1024.jpg",
+  "gain": 1.355,
+  "attribution": "Venus clouds: Solar System Scope (CC BY 4.0), from NASA imagery",
+  "shell": 70000.0
+ }
+}

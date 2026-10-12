@@ -5,7 +5,8 @@ import * as THREE from "three";
 import type { BodyRow } from "../core";
 import type { Settings } from "../settings";
 import type { Simulation } from "../sim/simulation";
-import { BODY_TINT, EarthView, GEOMETRIC_ALBEDO, PlainBody, SunView } from "./bodies";
+import { BODY_TINT, EarthView, GEOMETRIC_ALBEDO, GlobeBody, PlainBody, SunView } from "./bodies";
+import { RING_INNER, RING_OUTER, SaturnRings, ringProfileTexture } from "./rings";
 import { OrbitCamera } from "./camera";
 import type { Engine } from "./engine";
 import { MilkyWay, PlanetPoints, StarField, lambertPhase } from "./sky";
@@ -29,8 +30,19 @@ export interface SurfaceDef {
 const AU = 149_597_870_700;
 const SUN = 10;
 const EARTH = 399;
+const SATURN = 699;
 /** Focus value meaning "the spacecraft". */
 export const FOCUS_SPACECRAFT = -1;
+
+/** One entry of `assets/globes.json` (tools/assets/prepare_globes.py). */
+export interface GlobeDef {
+  name: string;
+  base: string;
+  gain: number;
+  attribution: string;
+  /** Height (m) of the rendered shell above the reference ellipsoid; 0 = the globe itself. */
+  shell: number;
+}
 
 export interface WorldAssets {
   day: THREE.Texture;
@@ -38,6 +50,8 @@ export interface WorldAssets {
   milkyWay: THREE.Texture;
   /** Streamed-surface bodies and their base textures. */
   surfaces: Map<number, { def: SurfaceDef; base: THREE.Texture }>;
+  /** Whole-globe textures (gas giants) and cloud/haze shells (Venus, Titan). */
+  globes: Map<number, { def: GlobeDef; base: THREE.Texture }>;
   /** Height grids by body (shared with the physics core). */
   terrain: Map<number, HeightGrid>;
   terrainBytes: Map<number, Uint8Array>;
@@ -48,7 +62,7 @@ export interface WorldAssets {
 
 interface BodyEntry {
   row: BodyRow;
-  view: PlainBody | EarthView | SunView;
+  view: PlainBody | EarthView | SunView | GlobeBody;
   /** Last render-space position (for picking/labels). */
   pos: THREE.Vector3;
   visible: boolean;
@@ -108,9 +122,24 @@ export class World {
         view = new PlainBody(1, 1, 1, new THREE.Color(0, 0, 0), 8);
         view.mesh.visible = false;
       }
+      else if (assets.globes.get(row.id)?.def.shell === 0) {
+        const { def, base } = assets.globes.get(row.id)!;
+        const ringed = row.id === SATURN;
+        view = new GlobeBody(base, def.gain, [a, b, c], 0, Math.max(64, seg), ringed ? this.ringProfile : null, [RING_INNER, RING_OUTER]);
+        if (ringed) {
+          this.rings = new SaturnRings(this.ringProfile, a, c);
+          engine.scene.add(this.rings.mesh);
+        }
+      }
       else {
         const t = BODY_TINT[row.id] ?? [0.3, 0.3, 0.3];
         view = new PlainBody(a, b, c, new THREE.Color(t[0], t[1], t[2]), Math.max(32, seg / 2));
+      }
+      const g = assets.globes.get(row.id);
+      if (g && g.def.shell > 0) {
+        const shell = new GlobeBody(g.base, g.def.gain, [a, b, c], g.def.shell, Math.max(64, seg));
+        this.shells.set(row.id, shell);
+        engine.scene.add(shell.mesh);
       }
       engine.scene.add(view.mesh);
       this.bodies.set(row.id, { row, view, pos: new THREE.Vector3(), visible: true });
@@ -239,11 +268,27 @@ export class World {
         );
         e.view.mesh.quaternion.setFromRotationMatrix(m);
       }
+      const shell = this.shells.get(id);
+      if (shell) {
+        shell.mesh.visible = true;
+        shell.mesh.position.copy(e.pos);
+        shell.mesh.quaternion.copy(e.view.mesh.quaternion);
+        shell.setCameraDistance(len(p));
+      }
       if (id !== SUN && !(e.view instanceof SunView)) {
         const toSun = sub(sunRel, r);
         const dSun = len(toSun);
         const irr = (AU / dSun) ** 2;
         e.view.setSun(vec(toSun).normalize(), irr);
+        shell?.setSun(vec(toSun).normalize(), irr);
+        if (id === SATURN && this.rings && e.view instanceof GlobeBody) {
+          this.rings.mesh.position.copy(e.pos);
+          this.rings.mesh.quaternion.copy(e.view.mesh.quaternion);
+          const inv = e.view.mesh.quaternion.clone().invert();
+          const sunB = vec(toSun).normalize().applyQuaternion(inv);
+          const camB = e.pos.clone().negate().applyQuaternion(inv);
+          this.rings.update(sunB, irr, camB);
+        }
         // Point source when smaller than ~1.5 px.
         const dist = len(p);
         const radius = e.row.radii[0];
@@ -389,6 +434,10 @@ export class World {
   private earthFrameRows: number[] = [];
   /** Terrain surfaces (Moon, Mars): updated after the camera is placed. */
   private surfaces = new Map<number, PlanetSurface>();
+  /** Cloud and haze shells over a body's own view (Venus, Titan). */
+  private shells = new Map<number, GlobeBody>();
+  private ringProfile = ringProfileTexture();
+  private rings: SaturnRings | null = null;
   /** Google 3D tiles (when a key is configured and enabled). */
   tiles: EarthTiles | null = null;
 }
