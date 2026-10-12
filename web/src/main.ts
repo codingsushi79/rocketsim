@@ -4,7 +4,7 @@ import { loadCore, type BodyRow } from "./core";
 import { SettingsStore, type DepthMode } from "./settings";
 import { SATURN_TEST, SCENARIOS, Simulation, type Scenario } from "./sim/simulation";
 import { Engine } from "./render/engine";
-import { World, type WorldAssets } from "./render/world";
+import { CAMERA_MODE_NAMES, FOCUS_SPACECRAFT, World, type WorldAssets } from "./render/world";
 import { loadStars } from "./render/sky";
 import { Menus } from "./ui/menus";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -41,7 +41,13 @@ interface TestHooks {
   /** World camera (tests frame the vehicle). */
   camera?: { setDistance(d: number, immediate?: boolean): void; setAngles(y: number, p: number, immediate?: boolean): void };
   /** World focus (tests look at bodies). */
-  world?: { focus: number; focusTargets(): number[]; cycleFocus(dir: 1 | -1): void };
+  world?: {
+    focus: number;
+    focusTargets(): number[];
+    cycleFocus(dir: 1 | -1): void;
+    cameraMode: string;
+    frame: { cam: [number, number, number]; rsc: [number, number, number] };
+  };
 }
 declare global {
   interface Window {
@@ -404,10 +410,21 @@ async function main(): Promise<void> {
       case "o": case "O": store.update((s) => (s.ui.showOrbit = !s.ui.showOrbit)); break;
       case "m": case "M": if (sim.hasVehicle) mapView.setActive(!mapView.active), hud.setMap(mapView.active); break;
       case "g": case "G": mapView.toggleTrack(); break;
+      case "c": case "C": {
+        if (mapView.active || world.focus !== FOCUS_SPACECRAFT) break;
+        const m = world.cycleCameraMode();
+        sim.notice = { text: `Camera: ${CAMERA_MODE_NAMES[m]}`, until: performance.now() + 2000 };
+        break;
+      }
       case "Delete": case "Backspace": if (mapView.active) mapView.deleteSelected(); break;
       case "F3": hud.debug = !hud.debug; e.preventDefault(); break;
     }
   });
+
+  // Cockpit placeholder: a window frame over the view (no interior model yet).
+  const cockpitFrame = document.createElement("div");
+  cockpitFrame.id = "cockpit-frame";
+  el("ui").before(cockpitFrame); // above the canvas, under the HUD
 
   el("boot").classList.add("hidden");
 
@@ -434,6 +451,7 @@ async function main(): Promise<void> {
     if (inGame || testScene) sim.tick(dt);
     else world.camera.spin(dt * 0.02);
     world.update(dt);
+    cockpitFrame.classList.toggle("on", inGame && !mapView.active && world.focus === FOCUS_SPACECRAFT && world.cameraMode === "cockpit");
     mapView.keysFine = sim.controls.fine;
     mapView.update(dt);
     attribution.update(world.tiles ? { ...world.tiles.attributions(), google: world.tiles.google } : null, hud.root);

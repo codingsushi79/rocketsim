@@ -34,6 +34,19 @@ const SATURN = 699;
 /** Focus value meaning "the spacecraft". */
 export const FOCUS_SPACECRAFT = -1;
 
+export type CameraMode = "chase" | "free" | "locked" | "cockpit" | "body" | "surface";
+export const CAMERA_MODES: CameraMode[] = ["chase", "free", "locked", "cockpit", "body", "surface"];
+export const CAMERA_MODE_NAMES: Record<CameraMode, string> = {
+  chase: "Chase", free: "Free (inertial)", locked: "Locked to vehicle", cockpit: "Cockpit", body: "Body-locked", surface: "Surface",
+};
+/** Cockpit eye in the RS-1 body frame (m): inside the crew module, near its windows. */
+const COCKPIT_EYE: [number, number, number] = [1.8, 0, -0.7];
+/** Surface camera above the contact grid. Earth's grid (Terrarium zoom 3) is far coarser
+ *  than the streamed terrain, so its eye sits higher to stay above the rendered ground. */
+const EYE_HEIGHT = 2;
+const EYE_HEIGHT_EARTH = 100;
+const CAMERA_BLEND_S = 0.6;
+
 /** One entry of `assets/globes.json` (tools/assets/prepare_globes.py). */
 export interface GlobeDef {
   name: string;
@@ -189,6 +202,46 @@ export class World {
     return [FOCUS_SPACECRAFT, ...order.filter((id) => this.bodies.has(id))];
   }
 
+  /** Spacecraft camera mode (C cycles). Bodies and the map always use the orbit frame. */
+  cameraMode: CameraMode = "chase";
+
+  cycleCameraMode(): CameraMode {
+    const i = CAMERA_MODES.indexOf(this.cameraMode);
+    this.setCameraMode(CAMERA_MODES[(i + 1) % CAMERA_MODES.length]!);
+    return this.cameraMode;
+  }
+
+  setCameraMode(m: CameraMode): void {
+    if (m === this.cameraMode) return;
+    this.blend = { t: 0, offset: this.last.offset, look: this.last.look.clone(), up: this.last.up.clone() };
+    this.cameraMode = m;
+    this.ground = null;
+    // Sensible starting angles for each mode.
+    if (m === "chase" || m === "locked") this.camera.setAngles(Math.PI, 0.2);
+    // Cockpit: 17° below the nose, so the horizon (≈20° dip from LEO) is in view.
+    if (m === "cockpit") this.camera.setAngles(0, 0.3);
+  }
+
+  /** Body-fixed point on the ground under the spacecraft plus an eye height. */
+  private groundPointUnder(body: number, rsc: V, bf: ArrayLike<number>): { body: number; p: V } {
+    const p: V = [
+      bf[0]! * rsc[0] + bf[1]! * rsc[1] + bf[2]! * rsc[2],
+      bf[3]! * rsc[0] + bf[4]! * rsc[1] + bf[5]! * rsc[2],
+      bf[6]! * rsc[0] + bf[7]! * rsc[1] + bf[8]! * rsc[2],
+    ];
+    const [a, b, c] = this.bodies.get(body)?.row.radii ?? [1, 1, 1];
+    const n = len(p);
+    const u: V = [p[0] / n, p[1] / n, p[2] / n];
+    // Radius of the reference ellipsoid along u, plus the terrain grid height (the core's
+    // contact surface; planetocentric latitude, as the renderer's grid sampling).
+    const rRef = 1 / Math.sqrt((u[0] / a) ** 2 + (u[1] / b) ** 2 + (u[2] / c) ** 2);
+    const lat = Math.atan2(u[2], Math.hypot(u[0], u[1]));
+    const lon = Math.atan2(u[1], u[0]);
+    const h = this.sim.sim.terrainHeight(body, lat, lon);
+    const r = rRef + h + (body === EARTH ? EYE_HEIGHT_EARTH : EYE_HEIGHT);
+    return { body, p: [u[0] * r, u[1] * r, u[2] * r] };
+  }
+
   cycleFocus(dir: 1 | -1): void {
     const t = this.focusTargets();
     const i = t.indexOf(this.focus);
@@ -199,7 +252,7 @@ export class World {
   }
 
   focusName(): string {
-    return this.focus === FOCUS_SPACECRAFT ? "Spacecraft" : (this.bodies.get(this.focus)?.row.name ?? "?");
+    return this.focus === FOCUS_SPACECRAFT ? `Spacecraft · ${CAMERA_MODE_NAMES[this.cameraMode]}` : (this.bodies.get(this.focus)?.row.name ?? "?");
   }
 
   update(dt: number): THREE.Vector3 | null {
@@ -238,7 +291,65 @@ export class World {
     if (fwdRef.lengthSq() < 1e-12) fwdRef.set(1, 0, 0);
     fwdRef.normalize();
     this.camera.update(dt);
-    const { offset } = this.camera.offset(up, fwdRef);
+    let { offset } = this.camera.offset(up, fwdRef);
+    // Look direction (unit, ICRF): toward the focus unless a mode says otherwise.
+    let look = vec(offset).negate().normalize();
+    const mode = this.mapMode || this.focus !== FOCUS_SPACECRAFT ? "chase" : this.cameraMode;
+    const att = this.vehicle ? s.attitude() : [];
+    const q = att.length === 4 ? new THREE.Quaternion(att[1]!, att[2]!, att[3]!, att[0]!) : null;
+    const bf = s.bodyFrame(center);
+    if (mode === "free") {
+      // Inertial: the ecliptic frame, so the view does not turn with the orbit.
+      const eps = (84381.406 / 3600) * (Math.PI / 180);
+      ({ offset } = this.camera.offset(new THREE.Vector3(0, -Math.sin(eps), Math.cos(eps)), new THREE.Vector3(1, 0, 0)));
+      up = new THREE.Vector3(0, -Math.sin(eps), Math.cos(eps));
+    } else if (mode === "locked" && q) {
+      // Vehicle frame (+X forward, −Z crew-up): the camera turns with the vehicle.
+      up = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+      ({ offset } = this.camera.offset(up, new THREE.Vector3(1, 0, 0).applyQuaternion(q)));
+    } else if (mode === "body" && bf.length === 9) {
+      // Co-rotating with the central body: its pole up, its prime meridian forward.
+      up = new THREE.Vector3(bf[6]!, bf[7]!, bf[8]!);
+      ({ offset } = this.camera.offset(up, new THREE.Vector3(bf[0]!, bf[1]!, bf[2]!)));
+    }
+    look = vec(offset).negate().normalize();
+    if (mode === "cockpit" && q && this.vehicle) {
+      // Eye at the crew-module window; drag looks around (yaw/pitch about the crew axes).
+      const t = this.sim.telemetry();
+      const com = t?.com ?? [0, 0, 0];
+      const eye = new THREE.Vector3(...COCKPIT_EYE).sub(new THREE.Vector3(com[0], com[1], com[2])).applyQuaternion(q);
+      offset = [eye.x, eye.y, eye.z];
+      up = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+      const fwd = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+      const right = new THREE.Vector3().crossVectors(fwd, up);
+      const cy = Math.cos(this.camera.yaw), sy = Math.sin(this.camera.yaw);
+      const cp = Math.cos(this.camera.pitch), sp = Math.sin(this.camera.pitch);
+      // Same sense as the orbit camera: a drag turns the view as it would orbit it.
+      look = fwd.multiplyScalar(cy * cp).addScaledVector(right, -sy * cp).addScaledVector(up, -sp).normalize();
+    } else if (mode === "surface" && bf.length === 9) {
+      if (!this.ground || this.ground.body !== center) this.ground = this.groundPointUnder(center, rsc, bf);
+      // Body-fixed → ICRF: Rᵀ·p (the centre body sits at the origin of this frame).
+      const g = this.ground.p;
+      const gi: V = [
+        bf[0]! * g[0] + bf[3]! * g[1] + bf[6]! * g[2],
+        bf[1]! * g[0] + bf[4]! * g[1] + bf[7]! * g[2],
+        bf[2]! * g[0] + bf[5]! * g[1] + bf[8]! * g[2],
+      ];
+      offset = sub(gi, rsc);
+      up = vec(gi).normalize();
+      look = vec(offset).negate().normalize();
+    }
+    // Smoothed transitions: blend from the offset and look direction at the switch.
+    if (this.blend) {
+      this.blend.t = Math.min(1, this.blend.t + dt / CAMERA_BLEND_S);
+      const k = this.blend.t * this.blend.t * (3 - 2 * this.blend.t);
+      offset = [0, 1, 2].map((i) => this.blend!.offset[i]! + (offset[i]! - this.blend!.offset[i]!) * k) as V;
+      look = this.blend.look.clone().lerp(look, k).normalize();
+      up = this.blend.up.clone().lerp(up, k).normalize();
+      if (this.blend.t >= 1) this.blend = null;
+    }
+    this.last = { offset, look: look.clone(), up: up.clone() };
+    if (this.vehicle) this.spacecraft.visible = mode !== "cockpit";
     const cam = add(focusPos, offset);
     this.frame = { cam, rel, rsc };
 
@@ -308,7 +419,6 @@ export class World {
     // ICRF from the core); the placeholder points prograde (+z along the orbit normal).
     const scPos = sub(rsc, cam);
     this.spacecraft.position.set(scPos[0], scPos[1], scPos[2]);
-    const att = this.vehicle ? s.attitude() : [];
     if (this.vehicle) {
       const o = s.outcome();
       if ((o === "crashed" || o === "brokeup" || o === "burnedup") && !this.vehicle.exploded) this.vehicle.explode();
@@ -360,7 +470,8 @@ export class World {
     }
 
     // Predicted orbit (one period, or the lookahead).
-    this.orbitLine.visible = this.settings.ui.showOrbit && !this.mapMode;
+    // Hidden in the cockpit: seen from inside the orbit plane it is a line through the view.
+    this.orbitLine.visible = this.settings.ui.showOrbit && !this.mapMode && mode !== "cockpit";
     if (this.orbitLine.visible) {
       const info = s.orbitInfo();
       const period = Number.isFinite(info[8]) ? info[8]! : 6000;
@@ -380,7 +491,7 @@ export class World {
     const c = this.engine.camera;
     c.position.set(0, 0, 0);
     c.up.copy(up);
-    c.lookAt(focusPos[0] - cam[0], focusPos[1] - cam[1], focusPos[2] - cam[2]);
+    c.lookAt(look);
     // Map distances: keep the near plane proportional (depth precision is ample either way).
     c.near = this.mapMode ? Math.max(0.05, this.camera.distance * 1e-4) : 0.05;
     c.updateProjectionMatrix();
@@ -434,6 +545,9 @@ export class World {
   private earthFrameRows: number[] = [];
   /** Terrain surfaces (Moon, Mars): updated after the camera is placed. */
   private surfaces = new Map<number, PlanetSurface>();
+  private ground: { body: number; p: V } | null = null;
+  private blend: { t: number; offset: V; look: THREE.Vector3; up: THREE.Vector3 } | null = null;
+  private last = { offset: [0, 0, 30] as V, look: new THREE.Vector3(0, 0, -1), up: new THREE.Vector3(0, 0, 1) };
   /** Cloud and haze shells over a body's own view (Venus, Titan). */
   private shells = new Map<number, GlobeBody>();
   private ringProfile = ringProfileTexture();

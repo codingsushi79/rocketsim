@@ -61,3 +61,54 @@ test("mouse and keyboard move the camera in flight and map view", async ({ page 
     expect(d.distance, `${view}: = key`).toBeLessThan(c.distance * 0.8);
   }
 });
+
+test("C cycles the camera modes: chase, free, locked, cockpit, body-locked, surface", async ({ page }) => {
+  mirrorConsole(page);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.addInitScript((low) => localStorage.setItem("rocketsim.settings.v1", JSON.stringify({ version: 1, graphics: low })), LOW);
+  await page.goto("/?test");
+  await page.getByRole("button", { name: "New Mission" }).click();
+  await page.locator("#mission-leo400").click();
+  await expect(page.locator(".hud-prop")).toBeVisible();
+  await frames(page, 5);
+
+  const state = () =>
+    page.evaluate(() => {
+      const w = window.__rocketsim!.world!;
+      const d = (a: number[], b: number[]) => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
+      return { mode: w.cameraMode, camToSc: d(w.frame.cam, w.frame.rsc), camR: Math.hypot(...w.frame.cam), off: w.frame.cam.map((c, i) => c - w.frame.rsc[i]!) };
+    });
+  const seen: string[] = [];
+  for (let k = 0; k < 6; k++) {
+    await page.keyboard.press("c");
+    await frames(page, 60); // past the 0.6 s blend
+    const st = await state();
+    seen.push(st.mode);
+    await expect(page.locator("#hud-focus")).toContainText(
+      { free: "Free", locked: "Locked", cockpit: "Cockpit", body: "Body-locked", surface: "Surface", chase: "Chase" }[st.mode]!,
+    );
+    if (st.mode === "cockpit") {
+      // Eye inside the crew module, a few metres from the CoM; the window frame is shown.
+      expect(st.camToSc).toBeLessThan(6);
+      await expect(page.locator("#cockpit-frame")).toBeVisible();
+    } else {
+      await expect(page.locator("#cockpit-frame")).toBeHidden();
+    }
+    if (st.mode === "surface") {
+      // On the ground under the spacecraft (Earth: grid height + 100 m eye), 400 km below it.
+      expect(st.camR).toBeGreaterThan(6.35e6);
+      expect(st.camR).toBeLessThan(6.39e6);
+      expect(Math.abs(st.camToSc - 400e3)).toBeLessThan(10e3);
+    }
+    if (st.mode === "free") {
+      // Inertial: the offset does not turn with the orbit (chase would rotate with it).
+      await frames(page, 30);
+      const st2 = await state();
+      const dd = Math.hypot(...st2.off.map((o, i) => o - st.off[i]!));
+      expect(dd / st.camToSc).toBeLessThan(1e-6);
+    }
+  }
+  expect(seen).toEqual(["free", "locked", "cockpit", "body", "surface", "chase"]);
+  expect(errors).toEqual([]);
+});
