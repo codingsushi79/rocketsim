@@ -8,9 +8,14 @@ use sim_core::terrain::HeightGrid;
 use std::io::Read;
 
 fn grid(name: &str) -> HeightGrid {
-    let path = format!("{}/../../web/public/terrain/{name}.rsdem", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/../../web/public/terrain/{name}.rsdem",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let mut b = Vec::new();
-    GzDecoder::new(std::fs::File::open(&path).unwrap()).read_to_end(&mut b).unwrap();
+    GzDecoder::new(std::fs::File::open(&path).unwrap())
+        .read_to_end(&mut b)
+        .unwrap();
     HeightGrid::from_bytes(&b).unwrap()
 }
 
@@ -52,10 +57,16 @@ fn moon_extremes() {
     // sphere (Smith et al. 2010, GRL 37:L18204).
     let (_, top) = extremes(&g, (3.0, 8.0), (-161.0, -156.0));
     eprintln!("lunar high {top:.0} m");
-    assert!((9_500.0..=10_800.0).contains(&top), "lunar high point {top} m");
+    assert!(
+        (9_500.0..=10_800.0).contains(&top),
+        "lunar high point {top} m"
+    );
     let (floor, _) = extremes(&g, (-72.0, -68.0), (-176.0, -168.0));
     eprintln!("Antoniadi {floor:.0} m");
-    assert!((-9_200.0..=-7_500.0).contains(&floor), "Antoniadi {floor} m");
+    assert!(
+        (-9_200.0..=-7_500.0).contains(&floor),
+        "Antoniadi {floor} m"
+    );
 }
 
 #[test]

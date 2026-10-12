@@ -897,9 +897,9 @@ impl Sim {
         let speeds = self.speeds();
         // Air-relative velocity (ICRF, the atmosphere co-rotating with the body), for the
         // renderer's shock-layer and wake effects.
-        let v_air = self
-            .current_state()
-            .map_or(V3::ZERO, |s| self.reference_velocity_with(&s, SpeedReference::Surface));
+        let v_air = self.current_state().map_or(V3::ZERO, |s| {
+            self.reference_velocity_with(&s, SpeedReference::Surface)
+        });
         format!(
             r#"{{"mass":{},"com":{},"omega":{},"tanks":{},"wheels":{},"engines":[{}],"rcs":[{}],"q":{},"heat":{},"pAmb":{},"dv":{},"burnTime":{},"desat":{},"captured":{},"dvExpended":{},"speeds":{},"vAir":{}}}"#,
             t.mass,
