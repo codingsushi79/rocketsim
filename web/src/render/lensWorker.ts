@@ -1,13 +1,14 @@
 // Builds the lens-ghost table off the main thread (lensTrace.ts; Hullin et al. 2011).
 //
-// For field angles 0…THETA_MAX and each kept ghost and wavelength, every vertex of a G×G
-// ray grid gets its image-plane position (in tan-space units: mm / EFL, so it maps
-// straight to the pinhole camera) and a radiance factor K such that the ghost's
-// equivalent scene radiance is L = π · E☉rel · K [U] (see units.ts):
-//   E_image = E_beam · R · A_beam / A_image             (energy conservation per ray tube)
-//   L_eq    = E_image · f² / A_pupil                    (camera equation, E = L·A_pupil/f²)
-// so K = R · (A_beam / A_image) · f² / A_pupil, with A_image the ray tube's area on the
-// image plane (from the grid's neighbouring rays).
+// For field angles 0…THETA_MAX and each kept ghost and wavelength, rays are traced over a
+// G×G grid on the entrance aperture, and the ghost is reduced to what a real flare ghost
+// looks like: a soft image of the polygonal stop. Stored per (θ, ghost, λ):
+//   x, y  centroid on the image plane, tan-space units (mm / EFL, so it maps straight to
+//         the pinhole camera);
+//   r     radius of the equivalent uniform disc, √2 × the RMS spread (tan units);
+//   K     mean radiance factor: the ghost's equivalent scene radiance is L = π·E☉rel·K [U]
+//         (units.ts), from energy conservation and the camera equation:
+//           E_image = E_beam · ΣR_i·A_beam,i / A_ghost,   L = E_image · f² / A_pupil.
 
 import { G, KEEP, THETA_MAX_DEG, THETA_STEPS, WAVELENGTHS, allGhosts, focalProperties, traceGhost, type GhostTable } from "./lensTrace";
 
@@ -24,39 +25,36 @@ function build(): GhostTable {
     .sort((a, b) => b.e - a.e)
     .slice(0, KEEP)
     .map((x) => x.g);
-  const per = G * G * 3;
-  const data = new Float32Array(THETA_STEPS * KEEP * 3 * per);
+  const data = new Float32Array(THETA_STEPS * KEEP * 3 * 4);
   for (let t = 0; t < THETA_STEPS; t++) {
     const theta = ((t * THETA_MAX_DEG) / (THETA_STEPS - 1)) * (Math.PI / 180);
     for (let k = 0; k < ranked.length; k++) {
       for (let l = 0; l < 3; l++) {
         const r = traceGhost(ranked[k]!, theta, WAVELENGTHS[l]!, G, imageZ);
-        const base = ((t * KEEP + k) * 3 + l) * per;
-        const P = (i: number, j: number) => [r.xy[(i * G + j) * 2]!, r.xy[(i * G + j) * 2 + 1]!] as const;
-        for (let i = 0; i < G; i++) {
-          for (let j = 0; j < G; j++) {
-            const v = i * G + j;
-            const [x, y] = P(i, j);
-            let K = 0;
-            if (!Number.isNaN(x)) {
-              // Image-plane area of this ray's tube: half the cross products to the
-              // neighbours (central differences where available).
-              const i0 = Math.max(0, i - 1), i1 = Math.min(G - 1, i + 1);
-              const j0 = Math.max(0, j - 1), j1 = Math.min(G - 1, j + 1);
-              const a = P(i, j0), b = P(i, j1), c = P(i0, j), d = P(i1, j);
-              if (![a, b, c, d].some((p) => Number.isNaN(p[0]))) {
-                const ux = (b[0] - a[0]) / (j1 - j0), uy = (b[1] - a[1]) / (j1 - j0);
-                const vx = (d[0] - c[0]) / (i1 - i0), vy = (d[1] - c[1]) / (i1 - i0);
-                const area = Math.abs(ux * vy - uy * vx);
-                // Cap the focusing: a caustic would be infinitely bright in the limit.
-                K = (r.e[v]! * (r.cell / Math.max(area, r.cell * 1e-4)) * efl * efl) / pupilArea;
-              }
-            }
-            data[base + v * 3] = x / efl;
-            data[base + v * 3 + 1] = y / efl;
-            data[base + v * 3 + 2] = K;
-          }
+        let n = 0, e = 0, sx = 0, sy = 0;
+        for (let i = 0; i < G * G; i++) {
+          const x = r.xy[2 * i]!;
+          if (Number.isNaN(x)) continue;
+          n++;
+          e += r.e[i]!;
+          sx += x;
+          sy += r.xy[2 * i + 1]!;
         }
+        const o = ((t * KEEP + k) * 3 + l) * 4;
+        if (n < 4) continue; // vignetted away: r = K = 0
+        const cx = sx / n, cy = sy / n;
+        let v = 0;
+        for (let i = 0; i < G * G; i++) {
+          const x = r.xy[2 * i]!;
+          if (Number.isNaN(x)) continue;
+          v += (x - cx) ** 2 + (r.xy[2 * i + 1]! - cy) ** 2;
+        }
+        const rad = Math.max(Math.SQRT2 * Math.sqrt(v / n), 0.05); // mm; ≥ blur of a real lens
+        const K = (e * r.cell * efl * efl) / (pupilArea * Math.PI * rad * rad);
+        data[o] = cx / efl;
+        data[o + 1] = cy / efl;
+        data[o + 2] = rad / efl;
+        data[o + 3] = K;
       }
     }
   }

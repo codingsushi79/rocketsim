@@ -302,6 +302,6 @@ export interface GhostTable {
   /** Entrance pupil area (mm²). */
   pupilArea: number;
   ghosts: number;
-  /** [theta][ghost][lambda][vertex] → (x, y, K): Float32Array of THETA_STEPS·KEEP·3·G²·3. */
+  /** [theta][ghost][lambda] → (x, y, r, K): Float32Array of THETA_STEPS·KEEP·3·4. */
   data: Float32Array;
 }

@@ -16,7 +16,7 @@
 import * as THREE from "three";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { QUAD_VS } from "./glsl";
-import { BLADES, G, KEEP, THETA_MAX_DEG, THETA_STEPS, WAVELENGTHS, type GhostTable } from "./lensTrace";
+import { BLADES, KEEP, THETA_MAX_DEG, THETA_STEPS, WAVELENGTHS, type GhostTable } from "./lensTrace";
 import { PRE_EXPOSURE, SUN_RADIANCE_U } from "./units";
 
 /** What the world knows about the Sun this frame. */
@@ -30,6 +30,9 @@ export interface SunState {
   /** Visibility from ray tests against the bodies (used when the disk is off-screen). */
   visibleCpu: number;
 }
+
+/** Straight fraction of each (rounded) aperture blade edge; assumed. */
+const STRAIGHT_EDGE = 0.25;
 
 /** The solar disk's clamp in SunView (fp16 headroom): measured visibility compares to it. */
 export const SUN_DISK_CLAMP = 6e4;
@@ -147,24 +150,15 @@ export class LensEffects {
 
   private buildGhostMesh(): void {
     const t = this.table!;
-    const n = t.ghosts * 3 * G * G;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    g.setAttribute("k", new THREE.BufferAttribute(new Float32Array(n), 1));
+    const n = t.ghosts * 3;
+    const g = new THREE.InstancedBufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.setAttribute("ghost", new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4)); // x, y, r, K
     const col = new Float32Array(n * 3);
-    const idx: number[] = [];
-    for (let b = 0; b < t.ghosts * 3; b++) {
-      const l = b % 3;
-      for (let v = 0; v < G * G; v++) col[(b * G * G + v) * 3 + l] = 1;
-      for (let i = 0; i < G - 1; i++) {
-        for (let j = 0; j < G - 1; j++) {
-          const p = b * G * G + i * G + j;
-          idx.push(p, p + 1, p + G, p + G, p + 1, p + G + 1);
-        }
-      }
-    }
-    g.setAttribute("col", new THREE.BufferAttribute(col, 3));
-    g.setIndex(idx);
+    for (let b = 0; b < n; b++) col[b * 3 + (b % 3)] = 1;
+    g.setAttribute("col", new THREE.InstancedBufferAttribute(col, 3));
+    g.instanceCount = n;
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         vis: { value: this.visRT.texture },
@@ -172,76 +166,74 @@ export class LensEffects {
         scale: { value: new THREE.Vector2(1, 1) },
         sunE: { value: 1 },
         gain: { value: 1 },
+        pxTan: { value: 1e-3 },
         preExposure: PRE_EXPOSURE,
       },
       vertexShader: /* glsl */ `
-        attribute float k;
+        attribute vec4 ghost;
         attribute vec3 col;
         uniform sampler2D vis;
         uniform vec2 rot, scale;
-        uniform float sunE, gain, preExposure;
+        uniform float sunE, gain, preExposure, pxTan;
         varying vec3 vL;
+        varying vec2 vP;
+        varying float vR, vEdge;
         void main() {
           // Lens frame: source at +x, image inverted; the screen sees −xy, rotated to the Sun.
-          vec2 p = -position.xy;
-          p = vec2(p.x * rot.x - p.y * rot.y, p.x * rot.y + p.y * rot.x);
+          vec2 c = -ghost.xy;
+          c = vec2(c.x * rot.x - c.y * rot.y, c.x * rot.y + c.y * rot.x);
+          float r = ghost.z;
           vec3 v = texture2D(vis, vec2(0.5)).rgb;
-          vL = 3.14159265 * sunE * k * gain * col * v * preExposure;
-          gl_Position = vec4(p * scale, 0.0, 1.0);
+          vL = r > 0.0 ? 3.14159265 * sunE * ghost.w * gain * col * v * preExposure : vec3(0.0);
+          vP = position.xy * 1.15;
+          vR = r;
+          vEdge = max(1.5 * pxTan / max(r, 1e-6), 0.04);
+          gl_Position = vec4((c + vP * r) * scale, 0.0, 1.0);
         }`,
       fragmentShader: /* glsl */ `
         varying vec3 vL;
-        void main() { gl_FragColor = vec4(vL, 1.0); }`,
+        varying vec2 vP;
+        varying float vR, vEdge;
+        #define BLADES ${BLADES}
+        void main() {
+          // Regular polygon (the stop, vertex at 0°, inverted by the lens: +180°), unit inradius·sec.
+          float a = atan(vP.y, vP.x) + 3.14159265;
+          float seg = 6.2831853 / float(BLADES);
+          float local = a - seg * floor(a / seg + 0.5);
+          float d = length(vP) * cos(local) / cos(3.14159265 / float(BLADES));
+          float inside = 1.0 - smoothstep(1.0 - vEdge, 1.0 + vEdge, d);
+          if (inside <= 0.0) discard;
+          // Real ghosts are a little brighter at the rim (aperture-edge caustic).
+          float rim = 1.0 + 0.5 * smoothstep(0.75, 1.0, d);
+          gl_FragColor = vec4(vL * inside * rim, 1.0);
+        }`,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthTest: false,
       depthWrite: false,
-      side: THREE.DoubleSide,
     });
     this.ghostMesh = new THREE.Mesh(g, mat);
     this.ghostMesh.frustumCulled = false;
     this.ghostScene.add(this.ghostMesh);
   }
 
-  /** Interpolate the ghost table at field angle θ (rad) into the mesh. */
+  /** Interpolate the ghost table at field angle θ (rad). */
   private updateGhosts(theta: number): void {
     const t = this.table!;
     const f = Math.min(THETA_STEPS - 1.001, (theta / ((THETA_MAX_DEG * Math.PI) / 180)) * (THETA_STEPS - 1));
     const i0 = Math.floor(f), w = f - i0;
-    const per = G * G * 3;
-    const pos = this.ghostMesh!.geometry.attributes.position as THREE.BufferAttribute;
-    const kk = this.ghostMesh!.geometry.attributes.k as THREE.BufferAttribute;
-    const P = pos.array as Float32Array, K = kk.array as Float32Array;
+    const attr = this.ghostMesh!.geometry.getAttribute("ghost") as THREE.InstancedBufferAttribute;
+    const A = attr.array as Float32Array;
     for (let b = 0; b < t.ghosts * 3; b++) {
-      const a0 = (i0 * KEEP * 3 + b) * per, a1 = ((i0 + 1) * KEEP * 3 + b) * per;
-      // Centroid of valid vertices, for vignetted ones (they get zero radiance).
-      let cx = 0, cy = 0, cn = 0;
-      for (let v = 0; v < G * G; v++) {
-        const x0 = t.data[a0 + v * 3]!, x1 = t.data[a1 + v * 3]!;
-        if (!Number.isNaN(x0) && !Number.isNaN(x1)) {
-          cx += x0 + (x1 - x0) * w;
-          cy += t.data[a0 + v * 3 + 1]! + (t.data[a1 + v * 3 + 1]! - t.data[a0 + v * 3 + 1]!) * w;
-          cn++;
-        }
+      const a0 = (i0 * KEEP * 3 + b) * 4, a1 = ((i0 + 1) * KEEP * 3 + b) * 4;
+      const r0 = t.data[a0 + 2]!, r1 = t.data[a1 + 2]!;
+      if (r0 <= 0 || r1 <= 0) {
+        A[b * 4 + 2] = 0;
+        continue;
       }
-      if (cn > 0) (cx /= cn), (cy /= cn);
-      for (let v = 0; v < G * G; v++) {
-        const o = b * G * G + v;
-        const x0 = t.data[a0 + v * 3]!, y0 = t.data[a0 + v * 3 + 1]!, k0 = t.data[a0 + v * 3 + 2]!;
-        const x1 = t.data[a1 + v * 3]!, y1 = t.data[a1 + v * 3 + 1]!, k1 = t.data[a1 + v * 3 + 2]!;
-        if (Number.isNaN(x0) || Number.isNaN(x1)) {
-          P[o * 3] = cx;
-          P[o * 3 + 1] = cy;
-          K[o] = 0;
-        } else {
-          P[o * 3] = x0 + (x1 - x0) * w;
-          P[o * 3 + 1] = y0 + (y1 - y0) * w;
-          K[o] = k0 + (k1 - k0) * w;
-        }
-      }
+      for (let c = 0; c < 4; c++) A[b * 4 + c] = t.data[a0 + c]! + (t.data[a1 + c]! - t.data[a0 + c]!) * w;
     }
-    pos.needsUpdate = true;
-    kk.needsUpdate = true;
+    attr.needsUpdate = true;
   }
 
   /** Measure the Sun's visibility in `hdr` and add spikes and ghosts into it. */
@@ -281,9 +273,12 @@ export class LensEffects {
       // perimeter P = 2·n·ri·tan(π/n), so P/A = 2/ri.
       const ri = Math.sqrt(this.pupilArea / (BLADES * Math.tan(Math.PI / BLADES))) * 1e-3;
       const PA = 2 / ri;
-      su.edgeK!.value.set(...(WAVELENGTHS.map((l) => (l * 1e-9 * PA) / (Math.PI * Math.PI * BLADES)) as [number, number, number]));
+      // Real lenses have rounded blades: only part of each edge is straight, and only the
+      // straight part diffracts into a spike. STRAIGHT_EDGE (assumed, typical of modern
+      // rounded-blade stops) scales the spike energy; the rest goes into the diffuse halo.
+      su.edgeK!.value.set(...(WAVELENGTHS.map((l) => (STRAIGHT_EDGE * l * 1e-9 * PA) / (Math.PI * Math.PI * BLADES)) as [number, number, number]));
       const px = (2 * tanV) / h;
-      su.width!.value = Math.max(0.6 * sun.angularRadius, 0.7 * px);
+      su.width!.value = Math.max(0.25 * sun.angularRadius, 0.7 * px);
       su.minAngle!.value = Math.max(2 * sun.angularRadius, 3 * px);
       this.spikeQuad.render(r);
     }
@@ -295,6 +290,7 @@ export class LensEffects {
       gu.scale!.value.set(1 / tanH, 1 / tanV);
       gu.sunE!.value = sun.irradiance;
       gu.gain!.value = this.ghostScale;
+      gu.pxTan!.value = (2 * tanV) / hdr.height;
       r.render(this.ghostScene, this.ortho);
     }
   }
