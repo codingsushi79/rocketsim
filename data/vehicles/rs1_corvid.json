@@ -312,6 +312,8 @@
       "thrust_vac": 66723.0,
       "isp_vac": 318.0,
       "exit_area": 1.54,
+      "exit_pressure": 1200.0,
+      "exit_mach": 4.45,
       "throttle_min": 0.4,
       "ignitions": 50,
       "min_on_time": 0.4,

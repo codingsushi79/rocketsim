@@ -179,6 +179,12 @@ pub struct Engine {
     /// Nozzle exit area, m². Thrust at ambient pressure p is F_vac − p·A_e at constant
     /// mass flow (Sutton & Biblarz, *Rocket Propulsion Elements*, 9th ed., eq. 3-21).
     pub exit_area: f64,
+    /// Nozzle exit static pressure (Pa) and exit Mach number at full throttle. Rendering
+    /// only (the plume's expansion with ambient pressure); the physics doesn't use them.
+    #[serde(default)]
+    pub exit_pressure: Option<f64>,
+    #[serde(default)]
+    pub exit_mach: Option<f64>,
     /// Lowest throttle setting (1 = not throttleable).
     pub throttle_min: f64,
     /// Number of ignitions available.

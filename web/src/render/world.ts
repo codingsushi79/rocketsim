@@ -499,7 +499,7 @@ export class World {
     if (att.length === 4) {
       this.spacecraft.quaternion.set(att[1]!, att[2]!, att[3]!, att[0]!);
       const tel = this.sim.telemetry();
-      this.vehicle!.update(dt, tel, s.attachedStages());
+      this.vehicle!.update(dt, tel, s.attachedStages(), this.engine.camera);
       this.vehicle!.updateEntry(dt, tel, this.engine.camera);
     } else {
       const xb = vec(vsc).normalize();

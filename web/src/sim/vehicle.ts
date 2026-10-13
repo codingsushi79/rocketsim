@@ -14,7 +14,7 @@ export interface VehicleDef {
   stages: { id: string; name: string }[];
   parts: { id: string; kind: string; stage: string; position: Vec3; shape: Record<string, Record<string, number | number[]>> | "point" }[];
   tanks: { id: string; stage: string; propellant: string; capacity: number }[];
-  engines: { id: string; stage: string; position: Vec3; direction: Vec3; thrust_vac: number; isp_vac: number; ignitions: number }[];
+  engines: { id: string; stage: string; position: Vec3; direction: Vec3; thrust_vac: number; isp_vac: number; ignitions: number; exit_area?: number; exit_pressure?: number; exit_mach?: number }[];
   rcs: { id: string; stage: string; thrust_vac: number; thrusters: { position: Vec3; direction: Vec3 }[] }[];
   wheels: { id: string; stage: string; max_momentum: number }[];
   /** Renderer-only cockpit layout. */

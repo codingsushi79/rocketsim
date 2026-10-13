@@ -11,6 +11,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Telemetry, VehicleDef, Vec3 } from "../sim/vehicle";
 import { PRE_EXPOSURE } from "./units";
 import { markEmissive } from "./emissive";
+import { Plume, nozzleData } from "./plume";
 import { ReentryFx, addIncandescence } from "./reentry";
 
 /** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
@@ -95,7 +96,7 @@ function plumeGeometry(spread: number): THREE.BufferGeometry {
 
 interface EngineView {
   node: THREE.Object3D;
-  plume: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  plume: Plume;
   exitRadius: number;
   thrustVac: number;
 }
@@ -148,11 +149,11 @@ export class VehicleView {
       const shape = part && part.shape !== "point" ? part.shape.cone_shell : undefined;
       const exitR = typeof shape?.base_radius === "number" ? shape.base_radius : 0.5;
       const len = part ? Math.abs(part.position[0] - e.position[0]) : 2;
-      const plume = new THREE.Mesh(plumeGeometry(1), exhaustMaterial(new THREE.Color(1.0, 0.55, 0.35), PLUME_RADIANCE_U));
-      plume.position.set(-len, 0, 0);
-      plume.renderOrder = 10;
-      markEmissive(plume);
-      node.add(plume);
+      const plume = new Plume(nozzleData(e, exitR), new THREE.Color(1.0, 0.55, 0.35), PLUME_RADIANCE_U);
+      plume.mesh.position.set(-len, 0, 0);
+      plume.mesh.renderOrder = 10;
+      markEmissive(plume.mesh);
+      node.add(plume.mesh);
       v.engines.push({ node, plume, exitRadius: exitR, thrustVac: e.thrust_vac });
     }
     const puffGeo = plumeGeometry(4);
@@ -211,7 +212,7 @@ export class VehicleView {
   }
 
   /** Per-frame update from telemetry. `attached[i]` for `def.stages[i]`. */
-  update(dt: number, t: Telemetry | null, attached: ArrayLike<number>): void {
+  update(dt: number, t: Telemetry | null, attached: ArrayLike<number>, camera?: THREE.Camera): void {
     this.time += dt;
     if (this.boom) {
       // Wall-clock animation: the sim clock stops at impact.
@@ -254,18 +255,8 @@ export class VehicleView {
       if (!e) return;
       ev.node.quaternion.copy(quatFromX(e.direction));
       const k = e.thrust / ev.thrustVac;
-      // Under-expanded in vacuum: the plume fans out; ambient pressure pinches it.
-      const spread = 1 + 5 / (1 + t.pAmb / 2000);
-      const len = ev.exitRadius * (6 + 10 * k) * (t.pAmb > 0 ? 1.4 : 1);
-      ev.plume.visible = e.running && e.thrust > 0;
-      ev.plume.scale.set(len, ev.exitRadius * (0.95 + 0.05 * spread), ev.exitRadius * (0.95 + 0.05 * spread));
-      if ((ev.plume.userData.spread ?? 0) !== Math.round(spread)) {
-        ev.plume.geometry.dispose();
-        ev.plume.geometry = plumeGeometry(Math.round(spread));
-        ev.plume.userData.spread = Math.round(spread);
-      }
-      ev.plume.material.uniforms.intensity!.value = 0.35 + 0.65 * k;
-      ev.plume.material.uniforms.time!.value = this.time;
+      ev.plume.mesh.visible = e.running && e.thrust > 0;
+      if (ev.plume.mesh.visible && camera) ev.plume.update(Math.min(1, e.throttle ?? k), t.pAmb, camera, this.time);
     });
     this.puffs.forEach((list, gi) => {
       list.forEach((m, ti) => {
