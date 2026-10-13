@@ -24,7 +24,9 @@ const LUM_SIZE = 256;
 export class Engine {
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.PerspectiveCamera;
-  readonly skyScene = new THREE.Scene();
+  /** Sky objects (stars, Milky Way, point planets): drawn first in the main pass, at
+   *  infinity (rotation only; see sky.ts). */
+  readonly skyScene = new THREE.Group();
   readonly scene = new THREE.Scene();
   readonly depth: ActiveDepth;
   readonly atmosphere: AtmospherePass;
@@ -292,19 +294,14 @@ export class Engine {
   render(dt: number, atmo: AtmosphereParams | null): void {
     const r = this.renderer;
     this.resize();
-    // 1. Sky (infinitely far: rotation only) and scene into the HDR target. Overlays
+    // 1. Sky (infinitely far: rotation only, drawn first) and scene into the HDR target. Overlays
     // read last frame's exposure.
     this.exposureUniform.value = this.adapt[this.adaptIndex]!.texture;
     r.setRenderTarget(this.hdr);
     r.setClearColor(0x000000, 1);
     r.clear(true, true, true);
-    const camQ = this.camera.quaternion;
-    const skyCam = this.skyCamera;
-    skyCam.quaternion.copy(camQ);
-    skyCam.fov = this.camera.fov;
-    skyCam.aspect = this.camera.aspect;
-    skyCam.updateProjectionMatrix();
-    r.render(this.skyScene, skyCam);
+    // One render call: three resolves the MSAA target after each call.
+    if (this.skyScene.parent !== this.scene) this.scene.add(this.skyScene);
     r.render(this.scene, this.camera);
 
     // 2. Atmosphere: in-scattering and transmittance along each pixel ray.
@@ -400,8 +397,6 @@ export class Engine {
     return PRE_EXPOSURE.value;
   }
 
-  /** Camera for the sky pass: same orientation and lens, at the origin. */
-  private skyCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
 
   forceExposure(e: number | null): void {
     this.fixedExposure = e;

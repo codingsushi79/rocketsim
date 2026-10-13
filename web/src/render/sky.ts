@@ -6,7 +6,18 @@
 import * as THREE from "three";
 import { MILKY_WAY_WHITE_U, PRE_EXPOSURE, irradianceFromMagnitude } from "./units";
 
-const SKY_RADIUS = 5; // inside the sky camera's near/far range
+const SKY_RADIUS = 5;
+
+/** GLSL: the sky is at infinity and is drawn first in the main scene pass (one MSAA
+ *  resolve per frame instead of two): rotation only (the camera's position is ignored),
+ *  and a depth of w/2, inside the clip volume for standard and reversed depth alike.
+ *  Without a near plane, the side planes (through the eye) still clip what is behind. */
+const SKY_POSITION_GLSL = /* glsl */ `
+  vec4 skyPosition(vec3 p) {
+    vec4 c = projectionMatrix * vec4(mat3(modelViewMatrix) * p, 1.0);
+    return vec4(c.xy, 0.5 * c.w, c.w);
+  }
+`;
 
 /** Unit vector for right ascension / declination (rad), ICRF axes. */
 export function radecToVector(ra: number, dec: number): THREE.Vector3 {
@@ -88,6 +99,7 @@ export class StarField {
     this.mat = new THREE.ShaderMaterial({
       uniforms: { pixelSolidAngle: { value: 1e-7 }, boost: { value: 1 }, size: { value: 3 }, preExposure: PRE_EXPOSURE },
       vertexShader: /* glsl */ `
+        ${SKY_POSITION_GLSL}
         attribute float irradiance;
         attribute vec3 color;
         uniform float size;
@@ -96,7 +108,7 @@ export class StarField {
         void main() {
           vColor = color;
           vIrr = irradiance;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          gl_Position = skyPosition(position);
           gl_PointSize = size;
         }`,
       fragmentShader: /* glsl */ `
@@ -113,10 +125,12 @@ export class StarField {
       blending: THREE.AdditiveBlending,
       depthTest: false,
       depthWrite: false,
-      transparent: true,
+      // Opaque queue (additive blending still applies) so the stars draw before the scene.
+      transparent: false,
     });
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false;
+    this.points.renderOrder = -9;
   }
 
   update(radiansPerPixel: number, boost: number): void {
@@ -163,7 +177,8 @@ export class MilkyWay {
       uniforms: { map: { value: texture }, scale: { value: MILKY_WAY_WHITE_U }, preExposure: PRE_EXPOSURE },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
-        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        ${SKY_POSITION_GLSL}
+        void main() { vUv = uv; gl_Position = skyPosition(position); }`,
       fragmentShader: /* glsl */ `
         uniform sampler2D map;
         uniform float scale, preExposure;
@@ -208,6 +223,7 @@ export class PlanetPoints {
     this.mat.uniforms.preExposure = PRE_EXPOSURE; // clone() copies values; share the live one
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false;
+    this.points.renderOrder = -9;
   }
 
   set(i: number, dir: THREE.Vector3, irradiance: number, color: THREE.Color): void {
