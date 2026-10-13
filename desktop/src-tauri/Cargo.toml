@@ -1,6 +1,6 @@
 [package]
 name = "rocketsim-desktop"
-version = "0.8.0"
+version = "0.10.0"
 description = "RocketSim desktop shell (Tauri v2): hosts the web build in the system WebView"
 edition = "2024"
 publish = false
