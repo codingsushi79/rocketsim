@@ -115,8 +115,11 @@ export const SCENARIOS: Scenario[] = [
     epochUtc: "2026-11-01T00:00:00Z",
     center: 399,
     altitudeM: 400e3,
+    // Parking plane containing the 2026 departure asymptote (DLA 23.2°, RLA 129.7°, from
+    // the core's porkchop): i = 28.5°, Ω = α + asin(−tan δ / tan i) ≈ 77.5°, as real Mars
+    // launches target. From another plane the planner reports the plane change needed.
     inclinationDeg: 28.5,
-    raanDeg: 200,
+    raanDeg: 77.5,
     massKg: 49_360,
     vehicle: RS1_MDS,
     target: 499,

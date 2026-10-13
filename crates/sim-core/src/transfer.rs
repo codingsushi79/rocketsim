@@ -43,6 +43,10 @@ pub enum TransferError {
         miss: f64,
     },
     Propagation(String),
+    /// The departure asymptote is out of reach of the parking orbit's plane.
+    OutOfPlane {
+        normal: f64,
+    },
 }
 
 impl core::fmt::Display for TransferError {
@@ -60,6 +64,11 @@ impl core::fmt::Display for TransferError {
                 miss / 1000.0
             ),
             TransferError::Propagation(e) => write!(f, "transfer: {e}"),
+            TransferError::OutOfPlane { normal } => write!(
+                f,
+                "transfer: the departure asymptote is out of the parking orbit's plane (a {:.1} km/s plane change); depart from an orbit whose plane contains it",
+                normal.abs() / 1000.0
+            ),
         }
     }
 }
@@ -231,7 +240,7 @@ pub fn porkchop(
 /// Patched-conic departure node for the arc (`t_dep`, `tof`).
 ///
 /// Local: an impulse at `t_dep` equal to v₁ − v_sc. Interplanetary: the burn point on the
-/// parking orbit within one period before `t_dep` whose outgoing hyperbola's asymptote is
+/// parking orbit within one period after `t_dep` whose outgoing hyperbola's asymptote is
 /// best aligned with v∞ (in-plane, tangential burn at periapsis: the asymptote lies at
 /// true anomaly ν∞ = acos(−1/e), e = 1 + r·v∞²/μ; Curtis eq. 8.43).
 pub fn first_guess(
@@ -254,7 +263,8 @@ pub fn first_guess(
             // Departure hyperbola with periapsis at the burn point r: its plane contains r̂
             // and the asymptote ŝ, the periapsis velocity is ⊥ r̂ in that plane with speed
             // √(v∞² + 2μ/r), and the asymptote lies at ν∞ = acos(−1/e), e = 1 + r·v∞²/μ
-            // (Curtis eq. 8.43). Over one parking period, pick the point minimising the Δv
+            // (Curtis eq. 8.43). Over one parking period from t_dep (forward: burns are never in
+            // the past), pick the point minimising the Δv
             // vector to that velocity, penalising asymptote misalignment (|r̂·ŝ − cos ν∞|).
             let el = kepler::Elements::from_state(parking.r, parking.v, parking.mu);
             let period = el.period(parking.mu).unwrap_or(5_400.0);
@@ -262,7 +272,7 @@ pub fn first_guess(
             let s_hat = a.dv_vec.normalized().ok_or(TransferError::Lambert)?;
             let mut best: Option<(f64, Epoch, V3)> = None;
             for k in 0..720 {
-                let t = t_dep.add_seconds(-period * f64::from(k) / 720.0);
+                let t = t_dep.add_seconds(period * f64::from(k) / 720.0);
                 let Some((r, v)) = parking.at(t) else {
                     continue;
                 };
@@ -467,42 +477,40 @@ fn apply(nodes: &mut [ManeuverNode], v: Var, d: f64) {
     }
 }
 
-/// Gauss–Newton aim: adjust `vars` so the spacecraft's position relative to `target` at
-/// `t_aim`, projected on the rows of `axes` (1–3 unit vectors), matches `point`. Steps are
-/// minimum-norm, δ = Jᵀ(JJᵀ)⁻¹(−f) (variables scaled: 1 m/s ↔ 10 s), limited and
-/// backtracked. Robust from a patched-conic guess that misses by 10⁵ km. Returns the
-/// nodes and the remaining (projected) miss.
-#[allow(clippy::too_many_arguments)]
-pub fn aim(
-    p: &Propagator,
-    eph: &Ephemeris,
-    s0: &ScState,
+/// A residual function of the plan's nodes.
+pub type Residual<'a> = dyn Fn(&[ManeuverNode]) -> Result<Vec<f64>, TransferError> + 'a;
+
+/// Gauss–Newton on node variables: drive `eval(nodes)` (any residual vector) to zero.
+/// Steps are minimum-norm, δ = Jᵀ(JJᵀ)⁻¹(−f) with a forward-difference Jacobian
+/// (variables scaled: 1 m/s ↔ 10 s), limited to 100 m/s and backtracked. Returns the
+/// nodes and the remaining residual norm. Probes that fail to propagate stop the search.
+pub fn gauss_newton(
+    eval: &Residual,
     nodes: &[ManeuverNode],
-    engine: Option<EngineModel>,
-    policy: &HorizonPolicy,
-    target: BodyId,
-    t_aim: Epoch,
-    point: V3,
-    axes: &[V3],
     vars: &[Var],
     tol: f64,
 ) -> Result<(Vec<ManeuverNode>, f64), TransferError> {
-    let m = axes.len();
+    gauss_newton_n(eval, nodes, vars, tol, 30)
+}
+
+/// `gauss_newton` with an iteration budget (long-arc evaluations are expensive).
+pub fn gauss_newton_n(
+    eval: &Residual,
+    nodes: &[ManeuverNode],
+    vars: &[Var],
+    tol: f64,
+    iters: usize,
+) -> Result<(Vec<ManeuverNode>, f64), TransferError> {
     let n = vars.len();
     let scale = |v: &Var| if matches!(v, Var::Time(_)) { 10.0 } else { 1.0 };
-    let eval = |ns: &[ManeuverNode]| -> Result<Vec<f64>, TransferError> {
-        let r = relative_at(p, eph, s0, ns, engine, policy, target, t_aim)? - point;
-        Ok(axes.iter().map(|a| r.dot(*a)).collect())
-    };
     let norm = |f: &[f64]| f64::sqrt(f.iter().map(|x| x * x).sum());
     let mut nodes = nodes.to_vec();
     let mut f = eval(&nodes)?;
-    for _ in 0..30 {
-        eprintln!("DBG   |f| {:.0} km", norm(&f) / 1000.0);
+    let m = f.len().min(3);
+    for _ in 0..iters {
         if norm(&f) < tol {
             break;
         }
-        // Jacobian in scaled variables.
         let mut jac = vec![vec![0.0; n]; m];
         for (k, v) in vars.iter().enumerate() {
             let h = 0.05 * scale(v);
@@ -515,7 +523,6 @@ pub fn aim(
                 jac[i][k] = (fk[i] - f[i]) / 0.05;
             }
         }
-        // (J Jᵀ) y = −f, δ = Jᵀ y.
         let mut a = [[0.0; 3]; 3];
         let mut b = [0.0; 3];
         for i in 0..3 {
@@ -566,6 +573,59 @@ pub fn aim(
     Ok((nodes, miss))
 }
 
+/// Aim: the spacecraft's position relative to `target` at `t_aim`, projected on `axes`
+/// (1–3 unit vectors), onto `point` (Gauss–Newton over `vars`).
+#[allow(clippy::too_many_arguments)]
+pub fn aim(
+    p: &Propagator,
+    eph: &Ephemeris,
+    s0: &ScState,
+    nodes: &[ManeuverNode],
+    engine: Option<EngineModel>,
+    policy: &HorizonPolicy,
+    target: BodyId,
+    t_aim: Epoch,
+    point: V3,
+    axes: &[V3],
+    vars: &[Var],
+    tol: f64,
+) -> Result<(Vec<ManeuverNode>, f64), TransferError> {
+    let eval = |ns: &[ManeuverNode]| -> Result<Vec<f64>, TransferError> {
+        let r = relative_at(p, eph, s0, ns, engine, policy, target, t_aim)? - point;
+        Ok(axes.iter().map(|a| r.dot(*a)).collect())
+    };
+    gauss_newton(&eval, nodes, vars, tol)
+}
+
+/// Spacecraft state (r, v) relative to `body` at `t` on the prediction with `nodes`.
+#[allow(clippy::too_many_arguments)]
+fn state_rel_at(
+    p: &Propagator,
+    eph: &Ephemeris,
+    s0: &ScState,
+    nodes: &[ManeuverNode],
+    engine: Option<EngineModel>,
+    policy: &HorizonPolicy,
+    body: BodyId,
+    t: Epoch,
+) -> Result<(V3, V3), TransferError> {
+    let mut pol = *policy;
+    pol.min = pol.min.max(t.seconds_since(s0.epoch) + 3_600.0);
+    pol.cap = pol
+        .cap
+        .min(t.seconds_since(s0.epoch) + 3_600.0)
+        .max(pol.min);
+    let pred = prediction::predict(p, s0, nodes, engine, &pol)
+        .map_err(|e| TransferError::Propagation(e.to_string()))?;
+    let s = pred.traj.state_at(t).ok_or(TransferError::NotConverged {
+        miss: f64::INFINITY,
+    })?;
+    let c = eph
+        .state_relative(s.state.frame.center, body, t)
+        .map_err(|e| TransferError::Ephemeris(e.to_string()))?;
+    Ok((s.state.r + c.r, s.state.v + c.v))
+}
+
 /// The full planner, as flown on real missions: the departure burn (patched-conic first
 /// guess, then its in-plane components and timing aimed on the n-body propagator), a
 /// midcourse correction at 35 % of the flight (full 3-D aim: a normal burn at departure
@@ -589,6 +649,33 @@ pub fn plan(
 ) -> Result<(Vec<ManeuverNode>, f64), TransferError> {
     let a = arc(eph, reg, parking, target, t_dep, tof)?;
     let node = first_guess(eph, reg, parking, target, t_dep, tof)?;
+    // A departure asymptote far out of the parking plane cannot be reached by a sensible
+    // burn (real missions launch into a plane containing it).
+    if node.normal.abs() > 1_000.0 {
+        return Err(TransferError::OutOfPlane {
+            normal: node.normal,
+        });
+    }
+    let local = matches!(geometry(reg, parking.center, target)?, Geometry::Local);
+    // Interplanetary arcs last months: plan with a planning-grade tolerance (rtol 1e-9,
+    // 1 mm). The plan is a first guess refined in flight by later corrections; the burns
+    // themselves are flown on the full-accuracy propagator.
+    let fast = Propagator {
+        eph: p.eph,
+        reg: p.reg,
+        forces: p.forces,
+        integrator: crate::propagator::IntegratorConfig {
+            rtol: 1e-9,
+            atol: 1e-3,
+            ..p.integrator
+        },
+        ballistic: p.ballistic,
+        center_switching: p.center_switching,
+        exact_horizon: p.exact_horizon,
+        terrain: p.terrain,
+    };
+    let p = if local { p } else { &fast };
+    let iters = if local { 30 } else { 10 };
     let mu_t = reg.get(target).map_or(0.0, |b| b.gm);
     let t_arr = t_dep.add_seconds(tof);
     let parent = reg
@@ -628,7 +715,6 @@ pub fn plan(
     // patched-conic burn short, and close to the escape energy the arrival position is so
     // nonlinear in Δv that Gauss–Newton stalls. A 1-D secant on the prograde Δv first makes
     // the distance from the central body at the aim time right.
-    let local = matches!(geometry(reg, parking.center, target)?, Geometry::Local);
     let mut node = node;
     if local && let Ok(tc) = eph.state_relative(target, parking.center, t_aim) {
         let want = (tc.r + point).norm();
@@ -663,67 +749,55 @@ pub fn plan(
     let hp = parking.r.cross(parking.v).normalized().unwrap_or(h);
     let e1 = (point - hp * point.dot(hp)).normalized().unwrap_or(side);
     let e2 = hp.cross(e1);
-    // Local transfers aim in-plane (a normal burn barely moves the ~180°-later arrival);
-    // interplanetary departures aim in 3-D (a normal burn tilts the escape asymptote).
-    let ident = [
-        V3::new(1.0, 0.0, 0.0),
-        V3::new(0.0, 1.0, 0.0),
-        V3::new(0.0, 0.0, 1.0),
-    ];
-    let (axes, vars): (&[V3], &[Var]) = if local {
-        (&[e1, e2], &[Var::Prograde(0), Var::Radial(0), Var::Time(0)])
+    let (nodes, _) = if local {
+        // A normal burn barely moves the ~180°-later arrival: aim in-plane, with timing.
+        aim(
+            p,
+            eph,
+            s0,
+            &[node],
+            engine,
+            policy,
+            target,
+            t_aim,
+            point,
+            &[e1, e2],
+            &[Var::Prograde(0), Var::Radial(0), Var::Time(0)],
+            0.02 * b,
+        )?
     } else {
-        (
-            &ident,
-            &[
-                Var::Prograde(0),
-                Var::Normal(0),
-                Var::Radial(0),
-                Var::Time(0),
-            ],
-        )
+        // Interplanetary: the departure's job is the planned v∞ vector. Target the velocity
+        // relative to the departure body at the edge of its SOI (5 days out: a short, cheap
+        // propagation), v = v̂∞·√(v∞² + 2μ/r) (energy integral at distance r).
+        let t_x = t_dep.add_seconds(5.0 * 86_400.0);
+        let mu_c = parking.mu;
+        let eval = |ns: &[ManeuverNode]| -> Result<Vec<f64>, TransferError> {
+            let (r, v) = state_rel_at(p, eph, s0, ns, engine, policy, parking.center, t_x)?;
+            let want = a.dv_vec.normalized().unwrap_or(V3::X)
+                * f64::sqrt(a.dv_vec.norm_squared() + 2.0 * mu_c / r.norm());
+            let d = v - want;
+            Ok(vec![d.x, d.y, d.z])
+        };
+        gauss_newton(
+            &eval,
+            &[node],
+            &[Var::Prograde(0), Var::Normal(0), Var::Radial(0)],
+            0.5,
+        )?
     };
-    eprintln!("DBG guess {:?} dv {:.0}", node, node.dv_magnitude());
-    eprintln!(
-        "DBG guess rel {:?}",
-        relative_at(p, eph, s0, &[node], engine, policy, target, t_aim)
-            .map(|r| (r - point).norm() / 1e3)
-    );
-    let (nodes, m1) = aim(
-        p,
-        eph,
-        s0,
-        &[node],
-        engine,
-        policy,
-        target,
-        t_aim,
-        point,
-        axes,
-        vars,
-        0.02 * b,
-    )?;
-    eprintln!("DBG stage1 {:.0} km {:?}", m1 / 1e3, nodes[0]);
     // 2. Midcourse: full 3-D aim.
     let t_mcc = t_dep.add_seconds(0.35 * tof);
     let nodes = [nodes[0], ManeuverNode::new(t_mcc, 0.0, 0.0, 0.0)];
-    let (nodes, _) = aim(
-        p,
-        eph,
-        s0,
+    let mcc_eval = |ns: &[ManeuverNode]| -> Result<Vec<f64>, TransferError> {
+        let r = relative_at(p, eph, s0, ns, engine, policy, target, t_aim)? - point;
+        Ok(vec![r.x, r.y, r.z])
+    };
+    let (nodes, _) = gauss_newton_n(
+        &mcc_eval,
         &nodes,
-        engine,
-        policy,
-        target,
-        t_aim,
-        point,
-        &[
-            V3::new(1.0, 0.0, 0.0),
-            V3::new(0.0, 1.0, 0.0),
-            V3::new(0.0, 0.0, 1.0),
-        ],
         &[Var::Prograde(1), Var::Normal(1), Var::Radial(1)],
         0.02 * b,
+        iters,
     )?;
     // 3. Trim the true periapsis with the midcourse burn.
     let (mcc, miss) = correct(

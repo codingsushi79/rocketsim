@@ -308,7 +308,7 @@ fn mars_plan_nbody() {
         a: r,
         e: 0.0,
         i: 28.5f64.to_radians(),
-        raan: 200f64.to_radians(),
+        raan: 77.5f64.to_radians(), // plane containing the 2026 asymptote (mars_2026_asymptote)
         argp: 0.0,
         nu: 0.0,
     };
@@ -355,8 +355,10 @@ fn mars_plan_nbody() {
         thrust: 101_800.0,
         isp: 449.7,
     });
-    let mut pol = HorizonPolicy::default();
-    pol.cap = pc.tof[k % 19] * 1.3;
+    let pol = HorizonPolicy {
+        cap: pc.tof[k % 19] * 1.3,
+        ..HorizonPolicy::default()
+    };
     let t = std::time::Instant::now();
     let res = transfer::plan(
         &p,
@@ -379,4 +381,160 @@ fn mars_plan_nbody() {
     );
     let (_, miss) = res.unwrap();
     assert!(miss.abs() < 50e3);
+}
+
+#[test]
+fn mars_2026_asymptote() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/public/ephemeris/ephem-2020.rseph"
+    );
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let mut e = Ephemeris::new();
+    e.load(&bytes).unwrap();
+    let reg = BodyRegistry::builtin();
+    let r = 6_378_137.0 + 400e3;
+    let park = Parking {
+        center: BodyId::EARTH,
+        epoch: t0(),
+        r: V3::new(r, 0.0, 0.0),
+        v: V3::new(0.0, (gm::EARTH / r).sqrt(), 0.0),
+        mu: gm::EARTH,
+    };
+    let pc = transfer::porkchop(
+        &e,
+        &reg,
+        &park,
+        BodyId::MARS,
+        t0().add_seconds(3600.0),
+        t0().add_seconds(120.0 * 86_400.0),
+        40,
+        150.0 * 86_400.0,
+        330.0 * 86_400.0,
+        19,
+    );
+    let (k, _) = pc
+        .dv
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.is_finite())
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap();
+    let a = transfer::arc(
+        &e,
+        &reg,
+        &park,
+        BodyId::MARS,
+        Epoch::from_tdb_seconds(pc.dep[k / 19]),
+        pc.tof[k % 19],
+    )
+    .unwrap();
+    let s = a.dv_vec.normalized().unwrap();
+    {
+        let r = 6_778_137.0;
+        let el = sim_core::kepler::Elements {
+            p: r,
+            a: r,
+            e: 0.0,
+            i: 28.5f64.to_radians(),
+            raan: 77.5f64.to_radians(),
+            argp: 0.0,
+            nu: 0.0,
+        };
+        let (rv, vv) = el.to_state(gm::EARTH);
+        let n = rv.cross(vv).normalized().unwrap();
+        eprintln!("ASYM plane normal {n:?} n·s {:.4}", n.dot(s));
+    }
+    eprintln!(
+        "ASYM dep +{:.1} d tof {:.0} d v∞ {:.0} m/s DLA {:.2}° RLA {:.2}°",
+        (pc.dep[k / 19] - t0().tdb_seconds()) / 86_400.0,
+        pc.tof[k % 19] / 86_400.0,
+        a.dv_vec.norm(),
+        fmath::asin(s.z).to_degrees(),
+        fmath::atan2(s.y, s.x).to_degrees()
+    );
+}
+
+#[test]
+fn mars_eval_cost() {
+    use sim_core::prediction::{EngineModel, predict};
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/public/ephemeris/ephem-2020.rseph"
+    );
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let mut e = Ephemeris::new();
+    e.load(&bytes).unwrap();
+    let reg = BodyRegistry::builtin();
+    let r = 6_778_137.0;
+    let el = sim_core::kepler::Elements {
+        p: r,
+        a: r,
+        e: 0.0,
+        i: 28.5f64.to_radians(),
+        raan: 77.5f64.to_radians(),
+        argp: 0.0,
+        nu: 0.0,
+    };
+    let (rv, vv) = el.to_state(gm::EARTH);
+    let park = Parking {
+        center: BodyId::EARTH,
+        epoch: t0(),
+        r: rv,
+        v: vv,
+        mu: gm::EARTH,
+    };
+    let node = transfer::first_guess(
+        &e,
+        &reg,
+        &park,
+        BodyId::MARS,
+        t0().add_seconds(3600.0 * 3.0),
+        290.0 * 86_400.0,
+    )
+    .unwrap();
+    eprintln!("COST guess {node:?}");
+    let s0 = ScState {
+        epoch: t0(),
+        state: State::new(
+            rv,
+            vv,
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass: 49_360.0,
+    };
+    let mut p = Propagator::new(&e, &reg);
+    let eng = Some(EngineModel {
+        thrust: 101_800.0,
+        isp: 449.7,
+    });
+    for (rtol, label) in [(1e-12, "full"), (1e-9, "planning")] {
+        p.integrator.rtol = rtol;
+        let pol = HorizonPolicy {
+            cap: 300.0 * 86_400.0,
+            min: 300.0 * 86_400.0,
+            ..HorizonPolicy::default()
+        };
+        let t = std::time::Instant::now();
+        let pr = predict(&p, &s0, &[node], eng, &pol).unwrap();
+        eprintln!(
+            "COST {label}: {:.2} s, horizon {:.0} d, arcs {}",
+            t.elapsed().as_secs_f64(),
+            pr.horizon.seconds_since(t0()) / 86_400.0,
+            pr.traj.arcs.len()
+        );
+        let t = std::time::Instant::now();
+        let m = sim_core::prediction::markers(&e, &reg, &pr.traj, t0(), Some(BodyId::MARS));
+        eprintln!(
+            "COST markers: {:.2} s ({} markers)",
+            t.elapsed().as_secs_f64(),
+            m.len()
+        );
+    }
 }
