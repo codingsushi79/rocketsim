@@ -11,8 +11,8 @@
 | 6 | Map view and maneuver nodes | ✅ Done |
 | 7 | Earth photorealism (Google 3D Tiles, **volumetric clouds**, night lights) | ✅ Done, awaiting review (real-key check pending) |
 | 8 | Rest of the solar system (+ owner polish round: Sun/lens, clouds, entry, rings, cockpit, UI) | ✅ Done, awaiting review |
-| 9 | Transfer planner (Lambert, porkchop, n-body correction) | |
-| 10 | Polish (save/load/replay, audio, menu polish, performance) | |
+| 9 | Transfer planner (Lambert, porkchop, n-body correction) | ✅ Done, awaiting review |
+| 10 | Polish (save/load/replay, audio, menu polish, performance) | ✅ Done, awaiting review |
 
 ## M1: project skeleton (2026-10-10)
 
@@ -509,3 +509,99 @@ Plan, with the owner's two feedback rounds: `docs/plans/M8-solar-system.md`.
 - The shock-layer glow is not a radiation model. Lens ghosts use a 32×32 ray grid (slight
   faceting at caustics).
 - Cockpit: only the RS-1 has a cabin; earthshine is off inside (it has no shadow map).
+
+## M9: transfer planner (2026-10-13)
+
+Plan: `docs/plans/M9-transfer-planner.md`.
+
+**What exists**
+- `lambert.rs`: Izzo (2015) Lambert solver, multi-revolution, Householder iterations, libm
+  math only.
+- `transfer.rs`:
+  - porkchops for local (Moon around Earth) and interplanetary (sibling planets)
+    geometries;
+  - first guesses: Lambert minus the spacecraft velocity (local); a broken-plane departure
+    hyperbola, with the burn point searched forward over one parking orbit
+    (interplanetary);
+  - n-body correction on the full propagator with finite burns: energy secant (local),
+    departure aim (in-plane for local; Gauss–Newton on the v∞ vector at the SOI edge for
+    interplanetary), a midcourse correction at 0.35 TOF for the 3-D aim, then a periapsis
+    trim. Interplanetary uses a planning tolerance (rtol 1e-9, atol 1e-3 m).
+  - It refuses a departure that would need > 1 km/s of plane change (`OutOfPlane`) instead
+    of returning a bad plan.
+- UI: transfer planner in the map view (target, periapsis altitude, porkchop heat-map,
+  click to choose, Plan → nodes for the autopilot).
+- Missions: Lunar flyby (RS-1), and Earth → Mars with the RS-1 and the MDS kick stage
+  (RL10C-1 class, 2538 m/s), started in the departure plane (i 28.5°, RAAN 77.5°, from
+  the 2026 window's DLA 23.21° and RLA 129.67°).
+
+**Verification** (`cargo test --workspace`)
+
+| Case | Result |
+|---|---|
+| Lambert | Vallado Ex. 7-5; Kepler round trips, hyperbolic and multi-rev |
+| Lunar porkchop | best TLI 3083 m/s, TOF 4.50 d |
+| Lunar plan | TLI 3145 m/s, MCC 8.9 m/s, periapsis error 0.2 km |
+| Inclined LEO → Moon | TLI 3224 m/s, MCC 25.4 m/s, error 0.1 km |
+| Mars 2026 porkchop | best 3592 m/s (patched conics) |
+| Mars n-body plan | departure 3885 m/s, MCC 188 m/s, periapsis error 4.5 km, 1.1 s to plan |
+
+- Playwright `transfer.spec.ts`: plans the lunar flyby in the browser.
+
+**Known limitations**
+- No gravity assists or multi-leg searches; no launch windows from the ground.
+- The Mars MCC (188 m/s) is larger than real missions' (~10–50 m/s): the departure is a
+  single impulsive-equivalent finite burn without a later trim before the MCC.
+
+## M10: polish (2026-10-13)
+
+Plan: `docs/plans/M10-polish.md`.
+
+**What exists**
+- **Save / load:** exact snapshots of the whole flight (`Flight::snapshot`/`restore`;
+  JSON with `float_roundtrip`). Named slots, quicksave/quickload (F5/F9), export/import,
+  and a Continue button.
+- **Replay:** a flight recorder and a replay view in the core (rendering at a past epoch
+  without touching the physics). Play, scrub, 1×–10,000×.
+- **Audio:** procedural Web Audio: engine, RCS, entry, staging, crash, caution chime, UI
+  clicks. Silent outside in vacuum unless "vacuum sound" is on; structure-borne sound in
+  the cockpit.
+- **Settings (D11):** audio volumes, control rebinding, SI/imperial units, cloud
+  resolution.
+- **Owner feedback rounds:**
+  - Firefly-style entry plasma;
+  - realistic lens ghosts, and no lens effects in the map view;
+  - ring sheet fade near the plane;
+  - cockpit windows, frames and glass; interactive console with display pages;
+  - SAS ring on the navball;
+  - city lights on the 3D tiles, near-field earthshine (stars in eclipse), off-frame
+    veiling glare, Black Marble base layer removed;
+  - plumes and plasma drawn after clouds (clouds no longer cover a plume).
+
+**Performance** (M4 integrated GPU, 2560×1440, GPU-synced, `PERF=1`)
+
+| Preset | Before M10 work | After |
+|---|---|---|
+| Max | 32.5 ms | 29.0 ms |
+| High | 28.3 ms | 20.1 ms |
+| Medium | 20.3 ms | 13.0 ms |
+
+- Clouds march at half resolution on High/Medium, with a joint bilateral upsample (Kopf et
+  al. 2007). Max keeps full resolution.
+- The sky is drawn in the main pass (one MSAA resolve per frame instead of two).
+- Measured remaining cost on High: MSAA 4× on fp16 about 5 ms, atmosphere 2.4 ms, clouds
+  4.4 ms, lens 2 ms.
+
+**Verification**
+- `cargo test --workspace --release`: 149 pass. Clippy and fmt clean.
+- `flight.rs`: a save/restore round trip is bit-identical, and the restored flight stays
+  within 4 cm of an uninterrupted one.
+- Playwright: 14 pass (3 perf tests skipped unless `PERF=1`), including `saves.spec.ts`
+  (save, load, export, replay).
+
+**Known limitations**
+- No moonlight: the night side is black apart from city lights (real moonlit clouds are
+  visible to a dark-adapted eye).
+- No airglow band at the limb.
+- Audio levels are perceptual, not calibrated SPL.
+
