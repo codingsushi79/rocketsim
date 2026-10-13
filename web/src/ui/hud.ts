@@ -5,6 +5,7 @@ import type { CabinData } from "../render/interior";
 import type { Simulation } from "../sim/simulation";
 import { PHYSICS_WARP_MAX, SAS_MODES, SPEED_REFS, WARP_LEVELS } from "../sim/simulation";
 import type { VehicleDef } from "../sim/vehicle";
+import { applyCollapsed } from "./collapse";
 import { clear, fmtDuration, fmtLength, fmtWarp, h, fmtSpeed } from "./dom";
 import { Navball } from "./navball";
 import { SAS_ICONS } from "./sasIcons";
@@ -130,6 +131,7 @@ export class Hud {
       h(
         "div",
         { class: "hud-navball" },
+        h("button", { class: "fold", title: "Minimise the navball (click again to restore)" }, "–"),
         h("div", { class: "speed" }, h("button", { class: "speed-mode", onclick: () => (this.sim.controls.speedRef = (this.sim.controls.speedRef + 1) % 3) }, el("speedmode")), el("speed", "mono speed-value")),
         h("div", { class: "navball-ring" }, this.navball.canvas, ...sasButtons),
         h("div", { class: "nav-readout mono" }, el("navread")),
@@ -153,6 +155,7 @@ export class Hud {
       ),
       el("warn", "hud-warn"),
     );
+    applyCollapsed(this.root);
   }
 
   /** Burn direction of the next node (or the autopilot's), for the navball marker. */

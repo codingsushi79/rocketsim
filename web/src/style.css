@@ -297,3 +297,15 @@ td.key { width: 140px; color: var(--accent); font-family: var(--mono); font-size
 .replay-scrub { flex: 1; accent-color: var(--accent); }
 .replay-time { min-width: 7em; text-align: right; }
 .rebind { min-width: 9em; font: 12px var(--mono); text-transform: none; letter-spacing: 0; padding: 0.35em 0.7em; }
+
+/* Collapsible panels (ui/collapse.ts). */
+.hud-orbit > .panel-title:not(.sub), .hud-prop > .panel-title:not(.sub), .map-panel > .panel-title:not(.sub), .transfer-panel > .panel-title:not(.sub) { cursor: pointer; pointer-events: auto; user-select: none; }
+.hud-orbit > .panel-title:not(.sub)::after, .hud-prop > .panel-title:not(.sub)::after, .map-panel > .panel-title:not(.sub)::after, .transfer-panel > .panel-title:not(.sub)::after { content: "  –"; color: var(--muted); float: right; }
+.collapsed > .panel-title::after { content: "  +" !important; }
+.collapsed > :not(.panel-title):not(.fold):not(.speed) { display: none !important; }
+.collapsed > .panel-title { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+.hud-navball { pointer-events: auto; }
+.hud-navball > .fold { position: absolute; top: 4px; right: 6px; padding: 0 6px; min-width: 0; font-size: 0.9em; line-height: 1.4; background: transparent; border: 1px solid var(--rule); color: var(--muted); cursor: pointer; }
+/* F2: hide the HUD and map panels (KSP's F2). */
+body.hud-off .hud, body.hud-off .map-panel, body.hud-off .transfer-panel, body.hud-off .ground-track { display: none !important; }
+.collapsed > .panel-title.sub { display: none !important; }

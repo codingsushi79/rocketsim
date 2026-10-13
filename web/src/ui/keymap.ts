@@ -26,6 +26,7 @@ export const ACTIONS = {
   target: ["Cycle target", "KeyY"],
   map: ["Map view", "KeyM"],
   camera: ["Camera mode", "KeyC"],
+  hud: ["Hide / show the HUD", "F2"],
   warpUp: ["Time warp up", "Period"],
   warpDown: ["Time warp down", "Comma"],
   quicksave: ["Quicksave", "F5"],

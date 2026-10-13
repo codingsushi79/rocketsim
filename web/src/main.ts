@@ -1,3 +1,4 @@
+import { installCollapsible } from "./ui/collapse";
 import "./style.css";
 import * as THREE from "three";
 import { loadCore, type BodyRow } from "./core";
@@ -423,6 +424,7 @@ async function main(): Promise<void> {
   const planner = new TransferPlanner(sim, bodies);
   mapView.onActiveChange = (on) => planner.setActive(on && sim.hasVehicle);
   ui.append(mapView.overlay, mapView.panel, mapView.track, planner.root, replay.root, menus.root, hud.root, attribution.root);
+  installCollapsible(ui);
   const syncCamera = (s: ReturnType<typeof store.get>) => {
     world.camera.invertX = s.controls.invertCameraX;
     world.camera.invertY = s.controls.invertCameraY;
@@ -467,6 +469,11 @@ async function main(): Promise<void> {
     if (!inGame) return;
     // Rebindable game keys (Settings → Controls).
     const bind = (x: Action) => codeOf(store.get().controls.bindings ?? {}, x);
+    if (e.code === bind("hud")) {
+      e.preventDefault();
+      document.body.classList.toggle("hud-off");
+      return;
+    }
     if (e.code === bind("warpUp")) return sim.warpUp();
     if (e.code === bind("warpDown")) return sim.warpDown();
     const alias: Record<string, string> = { [bind("map")]: "m", [bind("camera")]: "c", [bind("quicksave")]: "F5", [bind("quickload")]: "F9" };
