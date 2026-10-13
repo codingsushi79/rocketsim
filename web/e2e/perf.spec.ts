@@ -10,9 +10,9 @@ test.skip(!process.env.PERF, "set PERF=1 to run");
 test.use({ viewport: { width: 2560, height: 1440 }, launchOptions: { args: ["--use-angle=metal", "--ignore-gpu-blocklist"] } });
 
 const PRESETS = {
-  max: { preset: "max", renderScale: 1, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8, textureQuality: "high", depthMode: "auto", bodySegments: 256, cloudSteps: 128 },
-  high: { preset: "high", renderScale: 1, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8, textureQuality: "high", depthMode: "auto", bodySegments: 192, cloudSteps: 64 },
-  medium: { preset: "medium", renderScale: 1, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7, textureQuality: "standard", depthMode: "auto", bodySegments: 128, cloudSteps: 32 },
+  max: { preset: "max", renderScale: 1, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8, textureQuality: "high", depthMode: "auto", bodySegments: 256, cloudSteps: 128, cloudScale: 1 },
+  high: { preset: "high", renderScale: 1, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8, textureQuality: "high", depthMode: "auto", bodySegments: 192, cloudSteps: 64, cloudScale: 2 },
+  medium: { preset: "medium", renderScale: 1, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7, textureQuality: "standard", depthMode: "auto", bodySegments: 128, cloudSteps: 32, cloudScale: 2 },
 };
 
 for (const [name, graphics] of Object.entries(PRESETS)) test(`frame time at 1440p, ${name} preset`, async ({ page }) => {

@@ -29,7 +29,7 @@ export class Engine {
   readonly atmosphere: AtmospherePass;
   /** Volumetric clouds (set once the coverage texture is loaded). */
   clouds: CloudPass | null = null;
-  cloudSettings: CloudSettings = { steps: 48, lightSteps: 5 };
+  cloudSettings: CloudSettings = { steps: 48, lightSteps: 5, scale: 2 };
   private cloudRT!: THREE.WebGLRenderTarget;
   /** Current exposure as a GPU texture (r = exposure, g = metered mean luminance), for
    *  overlays that must keep a fixed display brightness (orbit lines, markers). */
@@ -291,7 +291,7 @@ export class Engine {
     // 2. Atmosphere: in-scattering and transmittance along each pixel ray.
     let clouds: THREE.Texture | null = null;
     const cs = this.settings.cloudSteps ?? 48;
-    this.cloudSettings = { steps: cs, lightSteps: cs <= 32 ? 3 : cs <= 64 ? 5 : 6 };
+    this.cloudSettings = { steps: cs, lightSteps: cs <= 32 ? 3 : cs <= 64 ? 5 : 6, scale: this.settings.cloudScale ?? 2 };
     if (atmo && atmo.toBodyFixed && this.clouds && cs > 0) {
       const luts = this.atmosphere.luts(r, atmo);
       this.clouds.render(r, this.hdr, this.cloudRT, this.camera, this.depth, atmo, luts, atmo.toBodyFixed, this.cloudSettings);

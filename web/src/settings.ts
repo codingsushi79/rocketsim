@@ -22,6 +22,8 @@ export interface GraphicsSettings {
   bodySegments: number;
   /** Volumetric cloud ray-march steps (0 = off). */
   cloudSteps: number;
+  /** Cloud march resolution divisor: 1 = full, 2 = half (a quarter of the pixels). */
+  cloudScale: 1 | 2;
 }
 
 export interface SimSettings {
@@ -107,10 +109,10 @@ export interface Settings {
 }
 
 export const GRAPHICS_PRESETS: Record<Exclude<Preset, "custom">, Omit<GraphicsSettings, "preset" | "depthMode">> = {
-  low: { renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6.0, textureQuality: "standard", bodySegments: 64, cloudSteps: 0 },
-  medium: { renderScale: 1.0, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7.0, textureQuality: "standard", bodySegments: 128, cloudSteps: 32 },
-  high: { renderScale: 1.0, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8.0, textureQuality: "high", bodySegments: 192, cloudSteps: 64 },
-  max: { renderScale: 1.0, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8.0, textureQuality: "high", bodySegments: 256, cloudSteps: 128 },
+  low: { renderScale: 0.75, msaa: 0, bloom: false, atmosphereSteps: 8, starLimitMag: 6.0, textureQuality: "standard", bodySegments: 64, cloudSteps: 0, cloudScale: 2 },
+  medium: { renderScale: 1.0, msaa: 0, bloom: true, atmosphereSteps: 16, starLimitMag: 7.0, textureQuality: "standard", bodySegments: 128, cloudSteps: 32, cloudScale: 2 },
+  high: { renderScale: 1.0, msaa: 4, bloom: true, atmosphereSteps: 32, starLimitMag: 8.0, textureQuality: "high", bodySegments: 192, cloudSteps: 64, cloudScale: 2 },
+  max: { renderScale: 1.0, msaa: 8, bloom: true, atmosphereSteps: 64, starLimitMag: 8.0, textureQuality: "high", bodySegments: 256, cloudSteps: 128, cloudScale: 1 },
 };
 
 /** The Map Tiles API key in effect: the player's, else the build's, else none. */

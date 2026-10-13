@@ -22,7 +22,8 @@
 //   sunsets).
 // - **Sky.** A small ambient term for skylight.
 //
-// Output: rgb = scene·T + L, alpha = distance (km) at which the cloud becomes opaque
+// The march runs at half resolution (a quarter of the pixels; it is the costliest pass)
+// and is upsampled with depth-aware weights. Output: rgb = scene·T + L, alpha = distance (km) at which the cloud becomes opaque
 // (transmittance below ½), so the atmosphere pass applies aerial perspective to the cloud
 // instead of the ground behind it.
 
@@ -122,7 +123,7 @@ const FS = /* glsl */ `
   precision highp sampler3D;
   layout(location = 0) out highp vec4 cloudOut;
   #define gl_FragColor cloudOut
-  uniform sampler2D colorTex;
+  layout(location = 1) out highp vec4 cloudAux;
   uniform sampler2D depthTex;
   uniform sampler2D coverageTex;
   uniform sampler3D noiseTex;
@@ -256,7 +257,6 @@ const FS = /* glsl */ `
   float cloudSigma(vec3 q, float fp, float lod, bool fine) { return cloudSample(q, fp, lod, fine).x; }
 
   void main() {
-    vec4 scene = texture2D(colorTex, vUv);
     vec2 ndc = vUv * 2.0 - 1.0;
     vec4 vd = projInv * vec4(ndc, 0.5, 1.0);
     vec3 viewDir = normalize(vd.xyz / vd.w);
@@ -267,7 +267,7 @@ const FS = /* glsl */ `
     vec3 o = -center;
     float rIn = rGround + CLOUD_BASE, rOut = rGround + CLOUD_TOP_MAX;
     vec2 outer = hitSphere(o, dir, rOut);
-    if (outer.y <= 0.0 || outer.x > outer.y) { gl_FragColor = vec4(scene.rgb, 0.0); return; }
+    if (outer.y <= 0.0 || outer.x > outer.y) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); cloudAux = vec4(0.0); return; }
     float t0 = max(outer.x, 0.0);
     float t1 = outer.y;
     vec2 inner = hitSphere(o, dir, rIn);
@@ -284,7 +284,7 @@ const FS = /* glsl */ `
     t1 = min(t1, sceneDist);
     // From low altitude, the shell is long and grazing: cap the marched distance.
     t1 = min(t1, t0 + 300000.0);
-    if (t1 <= t0) { gl_FragColor = vec4(scene.rgb, 0.0); return; }
+    if (t1 <= t0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); cloudAux = vec4(0.0); return; }
 
     // Adaptive steps: about 250 m of altitude change per sample (the layer is only a few
     // km thick, so grazing rays need long steps along the ray but not across the layer).
@@ -341,7 +341,50 @@ const FS = /* glsl */ `
       if (opaqueAt == 0.0 && T.g < 0.5) opaqueAt = tc;
       if (T.g < 0.003) break;
     }
-    gl_FragColor = vec4(scene.rgb * T + L * preExposure, opaqueAt * 0.001);
+    gl_FragColor = vec4(L * preExposure, T.g);
+    cloudAux = vec4(opaqueAt * 0.001, 0.0, 0.0, 1.0);
+  }
+`;
+
+// Full-resolution composite of the half-resolution march: joint bilateral upsampling
+// (Kopf et al. 2007), weights = bilinear × depth similarity, so cloud edges stay sharp
+// against the vehicle and terrain silhouettes.
+const UPSAMPLE_FS = /* glsl */ `
+  precision highp float;
+  layout(location = 0) out highp vec4 upOut;
+  #define gl_FragColor upOut
+  uniform sampler2D colorTex, depthTex, cloudTex, auxTex;
+  uniform vec2 halfSize;
+  varying vec2 vUv;
+  ${DEPTH_GLSL}
+  float logDepth(vec2 uv) {
+    float z = viewDepth(texture(depthTex, uv).r, uv * 2.0 - 1.0);
+    return log(min(z, 1e12) + 1.0);
+  }
+  void main() {
+    vec4 scene = texture(colorTex, vUv);
+    float z0 = logDepth(vUv);
+    vec2 hp = vUv * halfSize - 0.5;
+    vec2 b = floor(hp), f = hp - b;
+    vec4 acc = vec4(0.0);
+    float wsum = 0.0, oacc = 0.0, osum = 0.0;
+    for (int j = 0; j < 2; j++) {
+      for (int i = 0; i < 2; i++) {
+        vec2 c = clamp(b + vec2(float(i), float(j)), vec2(0.0), halfSize - 1.0);
+        // The march sampled the depth at its own texel centre: compare with that.
+        float zc = logDepth((c + 0.5) / halfSize);
+        float wb = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
+        float w = wb * (exp(-abs(zc - z0) * 6.0) + 1e-4);
+        acc += w * texelFetch(cloudTex, ivec2(c), 0);
+        float o = texelFetch(auxTex, ivec2(c), 0).r;
+        wsum += w;
+        if (o > 0.0) { oacc += w * o; osum += w; }
+      }
+    }
+    acc /= wsum;
+    // Opaque distance (km) only where most of the weight is cloud.
+    float opaque = osum > 0.5 * wsum ? oacc / osum : 0.0;
+    gl_FragColor = vec4(scene.rgb * acc.a + acc.rgb, opaque);
   }
 `;
 
@@ -349,6 +392,8 @@ export interface CloudSettings {
   /** Primary ray-march steps (0 = clouds off). */
   steps: number;
   lightSteps: number;
+  /** March resolution divisor (1 = full, 2 = half). */
+  scale: 1 | 2;
 }
 
 export class CloudPass {
@@ -365,7 +410,6 @@ export class CloudPass {
     this.mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
-        colorTex: { value: null },
         depthTex: { value: null },
         coverageTex: { value: coverage },
         noiseTex: { value: noise.tex },
@@ -397,6 +441,42 @@ export class CloudPass {
       depthWrite: false,
     });
     this.quad = new FullScreenQuad(this.mat);
+    this.upMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: {
+        colorTex: { value: null },
+        depthTex: { value: null },
+        cloudTex: { value: null },
+        auxTex: { value: null },
+        halfSize: { value: new THREE.Vector2(1, 1) },
+        projInv: { value: new THREE.Matrix4() },
+        depthMode: { value: 0 },
+        logDepthFC: { value: 1 },
+      },
+      vertexShader: QUAD_VS,
+      fragmentShader: UPSAMPLE_FS,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.upQuad = new FullScreenQuad(this.upMat);
+  }
+
+  /** March targets (full or half resolution): [0] = (L, T), [1] = opaque distance. */
+  private half: THREE.WebGLRenderTarget | null = null;
+  private upMat: THREE.ShaderMaterial;
+  private upQuad: FullScreenQuad;
+
+  private halfTarget(w: number, h: number, scale: number): THREE.WebGLRenderTarget {
+    const hw = Math.max(1, Math.ceil(w / scale)), hh = Math.max(1, Math.ceil(h / scale));
+    if (!this.half || this.half.width !== hw || this.half.height !== hh) {
+      this.half?.dispose();
+      this.half = new THREE.WebGLRenderTarget(hw, hh, { type: THREE.HalfFloatType, depthBuffer: false, count: 2 });
+      for (const t of this.half.textures) {
+        t.minFilter = t.magFilter = THREE.NearestFilter;
+        t.generateMipmaps = false;
+      }
+    }
+    return this.half;
   }
 
   render(
@@ -411,7 +491,6 @@ export class CloudPass {
     s: CloudSettings,
   ): void {
     const u = this.mat.uniforms;
-    u.colorTex!.value = src.texture;
     u.depthTex!.value = src.depthTexture;
     u.transmittanceLut!.value = luts.transmittance;
     u.multiscatterLut!.value = luts.multiscatter;
@@ -428,10 +507,23 @@ export class CloudPass {
     u.steps!.value = s.steps;
     u.lightSteps!.value = s.lightSteps;
     u.frame!.value = this.frame++ % 64;
-    u.pixelAngle!.value = ((camera.fov * Math.PI) / 180) / Math.max(1, dst.height);
+    const half = this.halfTarget(dst.width, dst.height, s.scale);
+    u.pixelAngle!.value = ((camera.fov * Math.PI) / 180) / half.height;
     const img = u.coverageTex!.value.image as { width?: number } | undefined;
     u.texelMeters!.value = (2 * Math.PI * p.groundRadius) / (img?.width ?? 2048);
-    r.setRenderTarget(dst);
+    r.setRenderTarget(half);
     this.quad.render(r);
+
+    const v = this.upMat.uniforms;
+    v.colorTex!.value = src.texture;
+    v.depthTex!.value = src.depthTexture;
+    v.cloudTex!.value = half.textures[0];
+    v.auxTex!.value = half.textures[1];
+    v.halfSize!.value.set(half.width, half.height);
+    v.projInv!.value.copy(camera.projectionMatrixInverse);
+    v.depthMode!.value = u.depthMode!.value;
+    v.logDepthFC!.value = u.logDepthFC!.value;
+    r.setRenderTarget(dst);
+    this.upQuad.render(r);
   }
 }
