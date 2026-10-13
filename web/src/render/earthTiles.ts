@@ -119,6 +119,8 @@ export class EarthTiles {
     oceanCut: { value: 0 },
     // Night lights (the globe's Black Marble, which the tiles would otherwise hide).
     nightMap: { value: null as THREE.Texture | null },
+    // The globe's water mask (1 = water), for the ocean cut.
+    waterMap: { value: null as THREE.Texture | null },
     nightScale: { value: NIGHT_LIGHTS_U },
     worldToEcef: { value: new THREE.Matrix4() },
     sunEcef: { value: new THREE.Vector3(1, 0, 0) },
@@ -127,6 +129,11 @@ export class EarthTiles {
   /** City lights on the tiles' night side: the same Black Marble map as the globe. */
   setNightLights(t: THREE.Texture): void {
     this.shared.nightMap.value = t;
+  }
+
+  /** The globe's water mask, so the ocean cut also catches tile seams and skirts. */
+  setWaterMask(t: THREE.Texture): void {
+    this.shared.waterMap.value = t;
   }
   private materials = new Set<THREE.ShaderMaterial>();
   /** Current blend weight (0 = hidden, no requests). */
@@ -206,6 +213,7 @@ export class EarthTiles {
         prev.call(m, sh, r);
         sh.uniforms.oceanCut = sh0.oceanCut;
         sh.uniforms.nightMap = sh0.nightMap;
+        sh.uniforms.waterMap = sh0.waterMap;
         sh.uniforms.nightScale = sh0.nightScale;
         sh.uniforms.worldToEcef = sh0.worldToEcef;
         sh.uniforms.sunEcef = sh0.sunEcef;
@@ -214,7 +222,7 @@ export class EarthTiles {
           .replace("#include <common>", "#include <common>\nuniform mat4 worldToEcef;\nvarying vec3 vEcef;")
           .replace("#include <project_vertex>", "#include <project_vertex>\nvEcef = (worldToEcef * modelMatrix * vec4(transformed, 1.0)).xyz;");
         sh.fragmentShader = sh.fragmentShader
-          .replace("#include <common>", "#include <common>\nuniform float oceanCut, nightScale, nightPre;\nuniform sampler2D nightMap;\nuniform vec3 sunEcef;\nvarying vec3 vEcef;\n" + NIGHT_LIGHTS_GLSL)
+          .replace("#include <common>", "#include <common>\nuniform float oceanCut, nightScale, nightPre;\nuniform sampler2D nightMap, waterMap;\nuniform vec3 sunEcef;\nvarying vec3 vEcef;\n" + NIGHT_LIGHTS_GLSL)
           .replace(
             "#include <emissivemap_fragment>",
             `#include <emissivemap_fragment>
@@ -233,6 +241,13 @@ export class EarthTiles {
               vec3 oc = diffuseColor.rgb;
               float ol = dot(oc, vec3(0.2126, 0.7152, 0.0722));
               if (ol < OCEAN_MAX_LUM && oc.b > oc.g && oc.g >= 0.8 * oc.r) discard;
+              // Where the globe's mask says open water, drop the tile whatever its colour:
+              // imagery filtered against tile padding at the seams, and the untextured
+              // skirts, otherwise show as lines along the tile edges. (Above OCEAN_CUT_ALT
+              // the globe already shows the ocean; islands are in its day map.)
+              vec3 we = normalize(vEcef);
+              vec2 wuv = vec2(atan(we.y, we.x) / 6.2831853 + 0.5, asin(clamp(we.z, -1.0, 1.0)) / 3.1415927 + 0.5);
+              if (texture2D(waterMap, wuv).r > 0.95) discard;
             }`,
           );
       };

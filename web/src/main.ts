@@ -284,6 +284,7 @@ async function main(): Promise<void> {
     if (src && !world.tiles) {
       world.tiles = new EarthTiles(engine, src, s.earth.tileError);
       world.tiles.setNightLights(assets.night);
+      world.tiles.setWaterMask(assets.water);
       engine.scene.add(world.tiles.anchor);
     } else if (world.tiles) {
       world.tiles.errorTarget = s.earth.tileError;
