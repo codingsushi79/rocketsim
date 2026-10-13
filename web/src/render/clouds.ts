@@ -307,11 +307,11 @@ const FS = /* glsl */ `
     vec3 T = vec3(1.0);
     vec3 L = vec3(0.0);
     float opaqueAt = 0.0;
-    float maxIter = float(steps) * 6.0;
+    float maxIter = float(steps) * 5.0;
     float t = t0;
     // Two-speed march (Schneider 2015, "The real-time volumetric cloudscapes of Horizon
     // Zero Dawn"): coarse steps through clear air; on entering cloud, step back and refine
-    // to quarter steps until the ray has been clear for a while. Thin low clouds are only
+    // to half steps until the ray has been clear for a few samples. Thin low clouds are only
     // ~1 km thick: two or three coarse jittered samples gave pixel-to-pixel noise in the
     // optical depth (hard, aliased edges).
     bool fineMode = false;
@@ -321,7 +321,7 @@ const FS = /* glsl */ `
       vec3 qa = o + dir * t;
       float cosZ = abs(dot(dir, qa) / length(qa));
       float dsC = clamp(300.0 / max(cosZ, 0.03), 150.0, 5000.0);
-      float ds = fineMode ? max(0.25 * dsC, 40.0) : dsC;
+      float ds = fineMode ? max(0.5 * dsC, 60.0) : dsC;
       float tc = t + ds * jitter;
       t += ds;
       if (tc > t1) break;
@@ -332,7 +332,7 @@ const FS = /* glsl */ `
       vec2 cs = cloudSample(q, fp, lod, true);
       float sigma = cs.x, tauCol = cs.y;
       if (sigma <= 0.0) {
-        if (fineMode && ++clear > 8) fineMode = false;
+        if (fineMode && ++clear > 3) fineMode = false;
         continue;
       }
       if (!fineMode) {
