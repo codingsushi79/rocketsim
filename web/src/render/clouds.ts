@@ -218,22 +218,30 @@ const FS = /* glsl */ `
     if (R <= 0.0) return vec2(0.0);
     float f = min(R / RC, 1.0);
     float Rcl = max(R, RC);
-    float tau = 7.5 * Rcl / (1.0 - Rcl);
-    // Where in the texel the cloud is: the billow field above its (1 − f) quantile.
-    float w60 = octave(NOISE_PERIOD.x, fp), w15 = octave(NOISE_PERIOD.y, fp);
-    float cov = f, excess = 0.5;
-    if (w60 > 0.0) {
+    // Two regimes, blended by whether sub-texel billows (15 km) span several pixels:
+    // - unresolved: a homogeneous column whose optical depth reproduces the texel's mean
+    //   reflectance, τ = 7.5·R/(1 − R) (two-stream, as above): far views look like the map;
+    // - resolved: a fraction f of the texel is cloud of τ_c = 7.5·R_c/(1 − R_c), placed where
+    //   the billow field exceeds its (1 − f) quantile (same mean reflectance).
+    // (Thresholding the 60 km octave, coarser than the 5 km texel, cut the smooth coverage
+    // into opaque texel-sized blobs: the blocky clouds.)
+    float w15 = octave(NOISE_PERIOD.y, fp);
+    float tauU = 7.5 * R / (1.0 - R);
+    float tauC = 7.5 * Rcl / (1.0 - Rcl);
+    float cov = 1.0, excess = 0.5;
+    if (w15 > 0.0) {
       float n60 = textureLod(noiseTex, bf / NOISE_PERIOD.x, 0.0).r;
-      float n15 = w15 > 0.0 ? textureLod(noiseTex, bf / NOISE_PERIOD.y, 0.0).r : n60;
-      float nb = mix(n60, 0.6 * n60 + 0.4 * n15, w15);
+      float n15 = textureLod(noiseTex, bf / NOISE_PERIOD.y, 0.0).r;
+      float nb = 0.6 * n60 + 0.4 * n15;
       float fu = f * (255.0 / 256.0) + 0.5 / 256.0;
-      float th = mix(textureLod(noiseQuant, vec2(fu, 0.25), 0.0).r, textureLod(noiseQuant, vec2(fu, 0.75), 0.0).r, w15);
+      float th = textureLod(noiseQuant, vec2(fu, 0.75), 0.0).r;
       // Edge softness at least the noise's change across a pixel (anti-aliasing).
-      float edge = 0.03 + 0.1 * (1.0 - w15) + 0.6 * fp / mix(NOISE_PERIOD.x, NOISE_PERIOD.y, w15);
+      float edge = 0.04 + 0.6 * fp / NOISE_PERIOD.y;
       float c = smoothstep(th - edge, th + edge, nb);
-      cov = mix(f, c, w60);
-      excess = mix(0.5, clamp((nb - th) / max(1.0 - th, 0.05), 0.0, 1.0), w60);
+      cov = mix(1.0, c, w15);
+      excess = mix(0.5, clamp((nb - th) / max(1.0 - th, 0.05), 0.0, 1.0), w15);
     }
+    float tau = mix(tauU, tauC, w15);
     if (cov <= 0.0) return vec2(0.0);
     // Tops rise with the texel's reflectance and tower where the billows are strongest.
     float top = CLOUD_BASE + (1000.0 + (CLOUD_TOP_MAX - CLOUD_BASE - 1000.0) * smoothstep(0.1, 0.9, R)) * (0.45 + 1.1 * excess);
@@ -298,13 +306,21 @@ const FS = /* glsl */ `
     vec3 T = vec3(1.0);
     vec3 L = vec3(0.0);
     float opaqueAt = 0.0;
-    float maxIter = float(steps) * 4.0;
+    float maxIter = float(steps) * 6.0;
     float t = t0;
-    for (int i = 0; i < 1100; i++) {
+    // Two-speed march (Schneider 2015, "The real-time volumetric cloudscapes of Horizon
+    // Zero Dawn"): coarse steps through clear air; on entering cloud, step back and refine
+    // to quarter steps until the ray has been clear for a while. Thin low clouds are only
+    // ~1 km thick: two or three coarse jittered samples gave pixel-to-pixel noise in the
+    // optical depth (hard, aliased edges).
+    bool fineMode = false;
+    int clear = 0;
+    for (int i = 0; i < 1600; i++) {
       if (float(i) >= maxIter || t >= t1) break;
       vec3 qa = o + dir * t;
       float cosZ = abs(dot(dir, qa) / length(qa));
-      float ds = clamp(300.0 / max(cosZ, 0.03), 150.0, 5000.0);
+      float dsC = clamp(300.0 / max(cosZ, 0.03), 150.0, 5000.0);
+      float ds = fineMode ? max(0.25 * dsC, 40.0) : dsC;
       float tc = t + ds * jitter;
       t += ds;
       if (tc > t1) break;
@@ -314,7 +330,17 @@ const FS = /* glsl */ `
       float lod = max(log2(fp / texelMeters), 0.0);
       vec2 cs = cloudSample(q, fp, lod, true);
       float sigma = cs.x, tauCol = cs.y;
-      if (sigma <= 0.0) continue;
+      if (sigma <= 0.0) {
+        if (fineMode && ++clear > 8) fineMode = false;
+        continue;
+      }
+      if (!fineMode) {
+        fineMode = true;
+        clear = 0;
+        t -= ds;
+        continue;
+      }
+      clear = 0;
       // The light: the Sun, or the Moon where sunlight is weaker (the night side; moonlight
       // is ~2.5e-6 of sunlight, so where both matter the Sun dominates anyway). One light
       // march either way.
