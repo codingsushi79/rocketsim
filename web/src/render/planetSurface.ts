@@ -114,16 +114,19 @@ const FS = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
   uniform sampler2D tileMap, baseMap;
   uniform bool hasTile;
-  uniform vec3 sunDir;
-  uniform float sunE, gain, preExposure;
+  uniform vec3 sunDir, shineDir;
+  uniform float sunE, gain, preExposure, shineE;
   varying vec2 vUv;
   varying vec2 vUvGlobal;
   varying vec3 vNormalW;
   void main() {
     #include <logdepthbuf_fragment>
     vec3 albedo = (hasTile ? texture2D(tileMap, vUv).rgb : texture2D(baseMap, vUvGlobal).rgb) * gain;
-    float ndl = max(dot(normalize(vNormalW), sunDir), 0.0);
-    gl_FragColor = vec4(albedo * sunE * ndl * preExposure, 1.0);
+    vec3 n = normalize(vNormalW);
+    float ndl = max(dot(n, sunDir), 0.0);
+    // Planetshine (earthshine on the Moon): the parent body as a distant source.
+    float nds = max(dot(n, shineDir), 0.0);
+    gl_FragColor = vec4(albedo * (sunE * ndl + shineE * nds) * preExposure, 1.0);
   }
 `;
 
@@ -132,8 +135,10 @@ export class PlanetSurface {
   private nodes = new Map<string, Node>();
   private loads = 0;
   private frame = 0;
-  private shared = { sunDir: { value: new THREE.Vector3(1, 0, 0) }, sunE: { value: 1 } };
+  private shared = { sunDir: { value: new THREE.Vector3(1, 0, 0) }, sunE: { value: 1 }, shineDir: { value: new THREE.Vector3(1, 0, 0) }, shineE: { value: 0 } };
   private loader = new THREE.ImageBitmapLoader();
+  /** Set by the world from the renderer's capabilities. */
+  maxAniso = 8;
 
   constructor(
     readonly radii: [number, number, number],
@@ -160,6 +165,24 @@ export class PlanetSurface {
     // Radius of the reference ellipsoid along this direction, then the grid height.
     const r = 1 / Math.sqrt((dx / a) ** 2 + (dy / b) ** 2 + (dz / c) ** 2) + (this.grid?.sample(lat, lon) ?? 0);
     return out.set(dx * r, dy * r, dz * r);
+  }
+
+  /** Outward surface normal at direction `up` (body-fixed unit), from samples `step` m apart. */
+  private normalAt(up: THREE.Vector3, step: number): THREE.Vector3 {
+    const ref = Math.abs(up.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+    const t1 = new THREE.Vector3().crossVectors(ref, up).normalize();
+    const t2 = new THREE.Vector3().crossVectors(up, t1);
+    const e = step / this.radii[0];
+    const at = (d: THREE.Vector3) => {
+      const u = d.clone().normalize();
+      return this.surface(Math.asin(Math.max(-1, Math.min(1, u.z))), Math.atan2(u.y, u.x), new THREE.Vector3());
+    };
+    const a = at(up.clone().addScaledVector(t1, e)).sub(at(up.clone().addScaledVector(t1, -e)));
+    const b = at(up.clone().addScaledVector(t2, e)).sub(at(up.clone().addScaledVector(t2, -e)));
+    const nn = a.cross(b);
+    if (!(nn.lengthSq() > 0)) return up.clone();
+    nn.normalize();
+    return nn.dot(up) < 0 ? nn.negate() : nn;
   }
 
   private bounds(level: number, row: number, col: number): [number, number, number, number] {
@@ -199,18 +222,20 @@ export class PlanetSurface {
       }
     }
     const at = (i: number, j: number) => grid[Math.min(N - 1, Math.max(0, i)) * N + Math.min(N - 1, Math.max(0, j))]!;
+    const normStep = Math.max((la1 - la0) / (N - 1), this.grid ? Math.PI / this.grid.height : 0) * this.radii[0];
     // Skirt depth: a fraction of the tile size, enough to cover level differences.
     const skirt = n.radius * 0.08;
     let k = 0;
     const put = (i: number, j: number, drop: boolean) => {
       const ci = Math.min(N - 1, Math.max(0, i)), cj = Math.min(N - 1, Math.max(0, j));
       p.copy(at(ci, cj));
-      // Normal from neighbouring vertices (terrain relief).
-      const dx = at(ci, cj + 1).clone().sub(at(ci, cj - 1));
-      const dy = at(ci - 1, cj).clone().sub(at(ci + 1, cj));
-      const nn = dx.cross(dy).normalize();
+      // Terrain normal from the surface itself, sampled along two tangents of the local
+      // vertical (no latitude/longitude singularity at the poles, where a tile row is
+      // one point), at the vertex spacing or the height grid's spacing, whichever is
+      // larger.
       const up = p.clone().add(n.centerBF).normalize();
-      if (nn.dot(up) < 0) nn.negate();
+      const nn = this.normalAt(up, normStep);
+
       if (drop) p.addScaledVector(up, -skirt);
       pos.set([p.x, p.y, p.z], k * 3);
       nor.set([nn.x, nn.y, nn.z], k * 3);
@@ -241,6 +266,8 @@ export class PlanetSurface {
         hasTile: { value: false },
         sunDir: this.shared.sunDir,
         sunE: this.shared.sunE,
+        shineDir: this.shared.shineDir,
+        shineE: this.shared.shineE,
         gain: { value: this.imagery?.gain ?? 1 },
         preExposure: PRE_EXPOSURE,
       },
@@ -269,7 +296,8 @@ export class PlanetSurface {
         n.loading = false;
         const t = new THREE.Texture(bmp as unknown as HTMLImageElement);
         t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 4;
+        // Grazing views toward the horizon need strong anisotropic filtering.
+        t.anisotropy = this.maxAniso;
         t.needsUpdate = true;
         n.tex = t;
         if (n.mesh) {
@@ -285,6 +313,12 @@ export class PlanetSurface {
         n.lastUsed = -1e9; // don't hammer a missing tile
       },
     );
+  }
+
+  /** Light from the parent body (direction in render axes, irradiance in E☉ units). */
+  setPlanetshine(dir: THREE.Vector3, irradiance: number): void {
+    this.shared.shineDir.value.copy(dir);
+    this.shared.shineE.value = irradiance;
   }
 
   /**

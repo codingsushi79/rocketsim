@@ -34,6 +34,8 @@ const AU = 149_597_870_700;
 const SUN = 10;
 const EARTH = 399;
 const MOON = 301;
+/** Earth's visual geometric albedo (Allen's Astrophysical Quantities, 4th ed., §12.3). */
+const EARTH_GEOMETRIC_ALBEDO = 0.367;
 const SATURN = 699;
 /** Focus value meaning "the spacecraft". */
 export const FOCUS_SPACECRAFT = -1;
@@ -101,6 +103,8 @@ export class World {
   private earthshine = new THREE.DirectionalLight(0x9fb4d9, 0);
   /** Moonlight at the vehicle (no shadow map; its colour: the Moon's reddish reflectance). */
   private moonLight = new THREE.DirectionalLight(0xfff0e0, 0);
+  /** Earthshine at the vehicle when it orbits the Moon (the centre-body light is the Moon's). */
+  private earthLight = new THREE.DirectionalLight(0x9fb4d9, 0);
   private stars: StarField;
   private milkyWay: MilkyWay;
   private planetPoints = new PlanetPoints(32);
@@ -131,6 +135,7 @@ export class World {
       else if (assets.surfaces.has(row.id)) {
         const { def, base } = assets.surfaces.get(row.id)!;
         const surf = new PlanetSurface([a, b, c], assets.terrain.get(row.id) ?? null, def, base, () => engine.radiansPerPixel);
+        surf.maxAniso = engine.renderer.capabilities.getMaxAnisotropy();
         this.surfaces.set(row.id, surf);
         engine.scene.add(surf.anchor);
         // A stand-in "view" with an empty mesh, so the rest of the loop is unchanged.
@@ -163,7 +168,7 @@ export class World {
       this.bodies.set(row.id, { row, view, pos: new THREE.Vector3(), visible: true });
     }
     engine.scene.add(this.spacecraft);
-    engine.scene.add(this.sunLight, this.sunLight.target, this.earthshine, this.earthshine.target, this.moonLight, this.moonLight.target);
+    engine.scene.add(this.sunLight, this.sunLight.target, this.earthshine, this.earthshine.target, this.moonLight, this.moonLight.target, this.earthLight, this.earthLight.target);
     engine.renderer.shadowMap.enabled = true;
     engine.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.sunLight.castShadow = true;
@@ -272,7 +277,8 @@ export class World {
     const rs = Math.asin(Math.min(1, sun.row.radii[0] / d));
     let vis = 1;
     for (const [id, e] of this.bodies) {
-      if (id === SUN || !e.view.mesh.visible) continue;
+      // Bodies drawn as streamed terrain hide their globe mesh but still occlude.
+      if (id === SUN || !(e.view.mesh.visible || this.surfaces.get(id)?.anchor.visible)) continue;
       const db = e.pos.length();
       if (db >= d || db <= 0) continue;
       const rb = Math.asin(Math.min(1, e.row.radii[0] / db));
@@ -587,6 +593,22 @@ export class World {
       this.moonLight.target.position.copy(this.spacecraft.position);
     }
 
+    // Earthshine at the vehicle around the Moon (Lambert Earth, geometric albedo 0.367).
+    this.earthLight.intensity = 0;
+    const erel = rel.get(EARTH);
+    if (center === MOON && erel) {
+      const toE = sub(erel, rsc);
+      const uE = vec(toE).normalize();
+      const alphaE = vec(sub(sunRel, erel)).angleTo(vec(sub(rsc, erel)));
+      const eE = (AU / len(sub(sunRel, erel))) ** 2 * EARTH_GEOMETRIC_ALBEDO * (6_371_000 / len(toE)) ** 2 * lambertPhase(alphaE);
+      const Rm = this.bodies.get(MOON)?.row.radii[0] ?? 1_737_400;
+      const b = rsc[0] * uE.x + rsc[1] * uE.y + rsc[2] * uE.z;
+      const blocked = b < 0 && len(rsc) ** 2 - b * b < Rm * Rm;
+      if (!blocked && !this.cockpitActive) this.earthLight.intensity = Math.PI * eE * PRE_EXPOSURE.value;
+      this.earthLight.position.copy(this.spacecraft.position).add(uE);
+      this.earthLight.target.position.copy(this.spacecraft.position);
+    }
+
     // Camera at the origin looking at the focus.
     const c = this.engine.camera;
     c.position.set(0, 0, 0);
@@ -611,6 +633,15 @@ export class World {
       surf.anchor.visible = true;
       const toSun = sub(sunRel, r);
       surf.update(e.pos, f, vec(toSun).normalize(), (AU / len(toSun)) ** 2, c);
+      // Earthshine on the Moon: Earth as a Lambert sphere of geometric albedo 0.367
+      // (Allen's Astrophysical Quantities, 4th ed., §12.3) at its phase seen from the Moon.
+      const er = rel.get(EARTH);
+      if (id === MOON && er) {
+        const toE = sub(er, r);
+        const alphaE = vec(sub(sunRel, er)).angleTo(vec(sub(r, er)));
+        const eE = (AU / len(sub(sunRel, er))) ** 2 * EARTH_GEOMETRIC_ALBEDO * (6_371_000 / len(toE)) ** 2 * lambertPhase(alphaE);
+        surf.setPlanetshine(vec(toE).normalize(), eE);
+      }
     }
 
     this.stars.update(rpp, this.settings.ui.starBoost);
