@@ -1,7 +1,7 @@
 {
   "name": "rocketsim-desktop",
   "private": true,
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "RocketSim as a desktop application (Windows .exe, macOS .app) via Tauri v2.",
   "scripts": {
     "tauri": "tauri",
