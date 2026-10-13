@@ -29,7 +29,7 @@
 
 import * as THREE from "three";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
-import { ATMOSPHERE_GLSL, type AtmosphereParams } from "./atmosphere";
+import { ATMOSPHERE_GLSL, ELLIPSOID_GLSL, type AtmosphereParams } from "./atmosphere";
 import type { ActiveDepth } from "./engine";
 import { DEPTH_GLSL, QUAD_VS } from "./glsl";
 import { PRE_EXPOSURE } from "./units";
@@ -145,6 +145,8 @@ const FS = /* glsl */ `
   ${DEPTH_GLSL}
   #define ATMO_LUTS
   ${ATMOSPHERE_GLSL}
+  uniform float ellA, ellC;
+  ${ELLIPSOID_GLSL}
 
   const float CLOUD_BASE = 1500.0;
   const float CLOUD_TOP_MAX = 12000.0;
@@ -205,7 +207,7 @@ const FS = /* glsl */ `
   // Returns (σ, column τ of the cloudy part).
   vec2 cloudSample(vec3 q, float fp, float lod, bool fine) {
     float r = length(q);
-    float h = r - rGround;
+    float h = ellAlt(q);
     if (h < CLOUD_BASE || h > CLOUD_TOP_MAX) return vec2(0.0);
     vec3 bf = toBodyFixed * q;
     float lon = atan(bf.y, bf.x);
@@ -274,7 +276,8 @@ const FS = /* glsl */ `
     float sceneDist = vz / max(-viewDir.z, 1e-6);
 
     vec3 o = -center;
-    float rIn = rGround + CLOUD_BASE, rOut = rGround + CLOUD_TOP_MAX;
+    // Shell bounds around the ellipsoid's whole radius range (equator to pole).
+    float rIn = min(ellC, rGround) + CLOUD_BASE, rOut = max(ellA, rGround) + CLOUD_TOP_MAX;
     vec2 outer = hitSphere(o, dir, rOut);
     if (outer.y <= 0.0 || outer.x > outer.y) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); cloudAux = vec4(0.0); return; }
     float t0 = max(outer.x, 0.0);
@@ -288,8 +291,8 @@ const FS = /* glsl */ `
       // Below the base: start where the ray leaves the core.
       t0 = max(t0, inner.y);
     }
-    vec2 ground = hitSphere(o, dir, rGround);
-    // hitSphere returns (1, −1) on a miss: only a real hit ends the ray at the ground.
+    vec2 ground = hitEllipsoid(o, dir);
+    // A miss is (1, −1)/s: only a real hit ends the ray at the ground.
     if (ground.y > 0.0 && ground.x <= ground.y && ground.x > 0.0) t1 = min(t1, ground.x);
     // Terrain occludes the layer, but streamed terrain far away is coarse: a tile's flat
     // triangles can sit kilometres under the true surface, inside the layer (that cut
@@ -345,15 +348,16 @@ const FS = /* glsl */ `
       // The light: the Sun, or the Moon where sunlight is weaker (the night side; moonlight
       // is ~2.5e-6 of sunlight, so where both matter the Sun dominates anyway). One light
       // march either way.
-      float rq = length(q);
+      float rq = rGround + max(ellAlt(q), 0.0);
+      float rqn = length(q);
       vec3 lDir = sunDir;
       float lE = sunE, lmu = mu;
-      vec3 tAtm = transmittanceToTop(rq, dot(q, sunDir) / rq);
+      vec3 tAtm = transmittanceToTop(rq, dot(q, sunDir) / rqn);
       if (moonE > 0.0 && sunE * tAtm.g < moonE) {
         lDir = moonDir;
         lE = moonE;
         lmu = dot(dir, moonDir);
-        tAtm = transmittanceToTop(rq, dot(q, moonDir) / rq);
+        tAtm = transmittanceToTop(rq, dot(q, moonDir) / rqn);
       }
       if (lE * tAtm.g <= 0.0) {
         // Unlit (in the shadow of the Earth for both): extinction only.
@@ -382,7 +386,7 @@ const FS = /* glsl */ `
       float A = max(Rcol - SS, 0.0) * (1.0 + MS_K) / max(1.0 - exp(-(1.0 + MS_K) * tauCol), 1e-4);
       float src = PI * phase(lmu, 1.0) * exp(-od) + A * exp(-MS_K * od);
       // Skylight: a few percent of the attenuated sunlight, isotropic.
-      vec3 ambient = PI * (tAtm * 0.035 + vec3(0.004, 0.006, 0.01) * smoothstep(-0.1, 0.2, dot(q / rq, lDir)));
+      vec3 ambient = PI * (tAtm * 0.035 + vec3(0.004, 0.006, 0.01) * smoothstep(-0.1, 0.2, dot(q / rqn, lDir)));
       vec3 S = lE * (tAtm * src + ambient);
       float stepT = exp(-sigma * ds);
       // Energy-conserving integration over the step (Hillaire 2015, "Physically based
@@ -475,6 +479,8 @@ export class CloudPass {
         toBodyFixed: { value: new THREE.Matrix3() },
         center: { value: new THREE.Vector3() },
         rGround: { value: 6_371_000 },
+        ellA: { value: 6_371_000 },
+        ellC: { value: 6_371_000 },
         rTop: { value: 6_471_000 },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         sunE: { value: 1 },
@@ -554,6 +560,8 @@ export class CloudPass {
     u.toBodyFixed!.value.copy(toBodyFixed);
     u.center!.value.copy(p.center);
     u.rGround!.value = p.groundRadius;
+    u.ellA!.value = p.ellipsoid?.[0] ?? p.groundRadius;
+    u.ellC!.value = p.ellipsoid?.[1] ?? p.groundRadius;
     u.rTop!.value = p.topRadius;
     u.sunDir!.value.copy(p.sunDir);
     u.sunE!.value = p.sunIrradiance;

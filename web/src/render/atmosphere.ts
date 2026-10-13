@@ -38,10 +38,33 @@ export interface AtmosphereParams {
   sunIrradiance: number;
   /** Render (ICRF) axes → body-fixed rotation, for surface-anchored layers (clouds). */
   toBodyFixed?: THREE.Matrix3;
+  /** Reference ellipsoid semi-axes (equatorial, polar), m. */
+  ellipsoid?: [number, number];
   /** Unit vector toward the Moon and its irradiance (E☉ units; moonlight.ts). */
   moonDir?: THREE.Vector3;
   moonIrradiance?: number;
 }
+
+/** GLSL: the planet's reference ellipsoid (semi-axes ellA equatorial, ellC polar, about
+ *  body-fixed z). The atmosphere is spherically layered by altitude above it, so the
+ *  air at the surface has the same density at the equator and the poles (a sphere of
+ *  mean radius is 7 km below the equator and 14 km above the poles: with realistic
+ *  haze in the lowest kilometres, the faceted globe mesh showed through as a grid).
+ *  Needs uniforms toBodyFixed (mat3), ellA, ellC and hitSphere(). */
+export const ELLIPSOID_GLSL = /* glsl */ `
+  float ellRadius(vec3 p) {
+    vec3 u = normalize(toBodyFixed * p);
+    return ellA * ellC / sqrt(ellC * ellC * (u.x * u.x + u.y * u.y) + ellA * ellA * u.z * u.z);
+  }
+  float ellAlt(vec3 p) { return length(p) - ellRadius(p); }
+  // Ray–ellipsoid intersection (o relative to the centre, unit d); (1, −1)/s on a miss.
+  vec2 hitEllipsoid(vec3 o, vec3 d) {
+    vec3 sc = vec3(1.0, 1.0, ellA / ellC);
+    vec3 ob = (toBodyFixed * o) * sc, db = (toBodyFixed * d) * sc;
+    float L = length(db);
+    return hitSphere(ob, db / L, ellA) / L;
+  }
+`;
 
 export const TRANSMITTANCE_SIZE = [256, 64] as const;
 export const MULTISCATTER_SIZE = 32;
@@ -216,10 +239,13 @@ const FS = /* glsl */ `
   uniform int steps;
   uniform float preExposure;
   uniform bool enabled;
+  uniform mat3 toBodyFixed;
+  uniform float ellA, ellC;
   varying vec2 vUv;
   ${DEPTH_GLSL}
   #define ATMO_LUTS
   ${ATMOSPHERE_GLSL}
+  ${ELLIPSOID_GLSL}
 
   void main() {
     vec4 scene = texture2D(colorTex, vUv);
@@ -241,13 +267,23 @@ const FS = /* glsl */ `
     if (a.y <= 0.0 || a.x > a.y) { gl_FragColor = scene; return; }
     float t0 = max(a.x, 0.0);
     float t1 = a.y;
-    vec2 g = hitSphere(o, dir, rGround);
-    // hitSphere returns (1, −1) on a miss: only a real hit ends the ray at the ground.
-    if (g.y > 0.0 && g.x <= g.y && g.x > 0.0) t1 = min(t1, g.x);
+    vec2 g = hitEllipsoid(o, dir);
+    // A miss is (1, −1)/s: only a real hit ends the ray at the ground. The globe mesh
+    // and coarse terrain tiles lie up to a few km under the true surface (flat
+    // triangles): a scene depth just beyond the ellipsoid is that surface.
+    bool hitG = g.y > 0.0 && g.x <= g.y && g.x > 0.0;
+    if (hitG) {
+      t1 = min(t1, g.x);
+      if (sceneDist > g.x - 30000.0) sceneDist = max(sceneDist, g.x);
+    }
     t1 = min(t1, sceneDist);
     if (t1 <= t0) { gl_FragColor = scene; return; }
 
-    int n = steps;
+    // At least 16 samples (fewer band visibly over the ground), jittered per pixel so the
+    // remaining sampling error is noise, not rings (the step boundaries line up between
+    // neighbouring pixels otherwise).
+    int n = max(steps, 16);
+    float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
     float mu = dot(dir, sunDir);
     float pr = rayleighPhase(mu), pm = miePhase(mu);
     vec3 tView = vec3(1.0);
@@ -264,23 +300,29 @@ const FS = /* glsl */ `
       float ta, tb;
       if (i < nA) {
         // Toward tm from t0: u from 1 to 0 (t increasing).
-        float u0 = 1.0 - float(i) / float(nA), u1 = 1.0 - float(i + 1) / float(nA);
+        float u0 = 1.0 - (float(i) + jit - 0.5) / float(nA), u1 = 1.0 - (float(i + 1) + jit - 0.5) / float(nA);
+        u0 = clamp(u0, 0.0, 1.0); u1 = clamp(u1, 0.0, 1.0);
+        if (i == 0) u0 = 1.0;
+        if (i == nA - 1) u1 = 0.0;
         ta = tm - (tm - t0) * u0 * u0;
         tb = tm - (tm - t0) * u1 * u1;
       } else {
         int k = i - nA;
-        float u0 = float(k) / float(nB), u1 = float(k + 1) / float(nB);
+        float u0 = clamp((float(k) + jit - 0.5) / float(nB), 0.0, 1.0), u1 = clamp((float(k + 1) + jit - 0.5) / float(nB), 0.0, 1.0);
+        if (k == nB - 1) u1 = 1.0;
+        if (k == 0) u0 = 0.0;
         ta = tm + (t1 - tm) * u0 * u0;
         tb = tm + (t1 - tm) * u1 * u1;
       }
       float ds = tb - ta;
       if (ds <= 0.0) continue;
       vec3 p = o + dir * (0.5 * (ta + tb));
-      float rp = length(p);
+      // Altitude above the ellipsoid, as a radius in the spherical LUT model.
+      float rp = rGround + max(ellAlt(p), 0.0);
       vec3 dens = atmoDensity(rp - rGround);
       vec3 sigT = atmoExtinction(dens);
       vec3 stepT = exp(-sigT * ds);
-      float muS = dot(p, sunDir) / rp;
+      float muS = dot(p, sunDir) / length(p);
       vec3 tSun = transmittanceToTop(rp, muS);
       vec3 single = (BETA_R * dens.x * pr + vec3(BETA_M_S) * dens.y * pm) * tSun;
       vec3 multi = atmoScattering(dens) * multiscatter(rp, muS);
@@ -327,6 +369,9 @@ export class AtmospherePass {
         logDepthFC: { value: 1 },
         center: { value: new THREE.Vector3() },
         rGround: { value: 6_371_000 },
+        toBodyFixed: { value: new THREE.Matrix3() },
+        ellA: { value: 6_371_000 },
+        ellC: { value: 6_371_000 },
         rTop: { value: 6_471_000 },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         sunE: { value: 1 },
@@ -402,6 +447,9 @@ export class AtmospherePass {
       u.rTop!.value = p.topRadius;
       u.sunDir!.value.copy(p.sunDir);
       u.sunE!.value = p.sunIrradiance;
+      if (p.toBodyFixed) u.toBodyFixed!.value.copy(p.toBodyFixed);
+      u.ellA!.value = p.ellipsoid?.[0] ?? p.groundRadius;
+      u.ellC!.value = p.ellipsoid?.[1] ?? p.groundRadius;
     }
     u.steps!.value = Math.min(Math.max(steps, 4), 128);
     r.setRenderTarget(dst);

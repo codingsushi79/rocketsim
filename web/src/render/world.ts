@@ -655,6 +655,7 @@ export class World {
       this.atmo = {
         center: earth.pos.clone(),
         groundRadius: 6_371_000,
+        ellipsoid: [earth.row.radii[0], earth.row.radii[2]],
         topRadius: 6_471_000,
         sunDir: vec(toS).normalize(),
         sunIrradiance: (AU / len(toS)) ** 2,
