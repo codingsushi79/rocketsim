@@ -12,6 +12,7 @@ import type { Telemetry, VehicleDef, Vec3 } from "../sim/vehicle";
 import { PRE_EXPOSURE } from "./units";
 import { markEmissive } from "./emissive";
 import { Plume, nozzleData } from "./plume";
+import { addExteriorWindows } from "./exteriorWindows";
 import { ReentryFx, addIncandescence } from "./reentry";
 
 /** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
@@ -143,6 +144,7 @@ export class VehicleView {
       if ((o as THREE.Mesh).isMesh) hull.push(o as THREE.Mesh);
     });
     v.entry.attach(hull);
+    if (def.cabin) addExteriorWindows(def.cabin, hull, gltf.scene);
     for (const e of def.engines) {
       const node = gltf.scene.getObjectByName(`engine_${e.id}`) ?? new THREE.Group();
       const part = def.parts.find((p) => p.kind === "engine" && p.stage === e.stage);

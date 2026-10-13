@@ -124,7 +124,11 @@ function vesselGeometry(def: CabinDef, grow = 0): THREE.BufferGeometry {
       uv.push((az + 180) / 60, x / 1.2);
     }
   }
-  const inWindow = (x: number, az: number) => def.windows.some((w) => windowLocal(def, w, x, az) < 0);
+  // Cut every cell within ¾ of a cell of an opening: a cell kept just outside the outline
+  // otherwise pokes its corners into the opening (teeth seen through the window tunnel).
+  // The hole is then up to ~1.5 cells larger than the outline, hidden by the 5 cm bezel.
+  const cell = Math.max((x1 - x0) / NX, ((2 * Math.PI) / NA) * Math.max(r0, r1));
+  const inWindow = (x: number, az: number) => def.windows.some((w) => windowLocal(def, w, x, az) < 0.75 * cell);
   for (let i = 0; i < NX; i++) {
     for (let j = 0; j < NA; j++) {
       const xc = x0 + ((x1 - x0) * (i + 0.5)) / NX;
@@ -685,7 +689,7 @@ export class Interior {
       d.mesh.position.set(-0.036, (i - 1) * (dw + 0.06), dz);
       consoleG.add(d.mesh);
       // Bezel behind the screen (the screen sits 2 mm proud of it).
-      const bz = new THREE.Mesh(new THREE.BoxGeometry(0.006, dw + 0.03, dh + 0.03), trim);
+      const bz = new THREE.Mesh(new THREE.BoxGeometry(0.006, dw + 0.03, dh + 0.03), dark);
       bz.position.set(-0.031, d.mesh.position.y, dz);
       consoleG.add(bz);
       this.displays.push(d);
@@ -728,8 +732,9 @@ export class Interior {
 
     // Lockers along the side walls and handrails.
     for (const side of [-1, 1]) {
-      const locker = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.05, 0.5), new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.8 })));
-      locker.position.set(0.85, side * 1.12, 0.5);
+      // Aft of the side windows (x 1.08–1.42 m).
+      const locker = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.5), new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.8 })));
+      locker.position.set(0.72, side * 1.12, 0.5);
       locker.rotation.x = side * 0.35;
       this.body.add(locker);
       const rail = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.9, 8), new THREE.MeshStandardMaterial({ color: 0xd8a33a, roughness: 0.5, metalness: 0.3 })));
@@ -752,6 +757,15 @@ export class Interior {
       lamp.rotation.y = Math.PI / 2;
       this.body.add(lamp);
     }
+    // Every lit surface in the cabin takes the shadow map: one that doesn't receives the
+    // full direct sunlight through the hull (≈ 400× the cabin lighting) and burns white.
+    this.body.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !(m.material instanceof THREE.ShaderMaterial)) {
+        m.receiveShadow = true;
+        m.castShadow = true;
+      }
+    });
     this.root.add(this.body);
     this.root.visible = false;
   }
