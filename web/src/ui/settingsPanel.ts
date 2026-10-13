@@ -1,39 +1,24 @@
 // Settings screen: Graphics, Simulation, Controls, Audio, Interface.
 
+import { ACTIONS, codeOf, keyLabel, type Action } from "./keymap";
 import { ionToken, mapTilesKey, surfaceSource, GRAPHICS_PRESETS, type Preset, type SettingsStore } from "../settings";
 import { clear, h } from "./dom";
 
 type Tab = "graphics" | "earth" | "simulation" | "controls" | "audio" | "interface";
 
 export const KEYBINDINGS: [string, string][] = [
-  [", / .", "Time warp down / up"],
   ["/", "Reset warp to 1×"],
   ["P", "Pause / resume time"],
   ["[ / ]", "Previous / next camera focus"],
   ["Mouse drag / arrows", "Orbit camera (flight and map view)"],
   ["Wheel / = − / PgUp PgDn", "Zoom (1 m to interplanetary)"],
-  ["O", "Toggle predicted orbit"],
   ["F3", "Debug overlay (FPS, integrator)"],
   ["Esc", "Pause menu"],
   ["F11", "Fullscreen"],
-  ["W / S", "Pitch down / up"],
-  ["A / D", "Yaw left / right"],
-  ["Q / E", "Roll left / right"],
-  ["H / N", "Translate forward / back (RCS)"],
-  ["J / L", "Translate left / right"],
-  ["I / K", "Translate up / down"],
-  ["Shift / Ctrl", "Throttle up / down"],
-  ["Z / X", "Full throttle / cut (throttle > 0 ignites)"],
-  ["Space (hold)", "Stage: separate the service module"],
-  ["T", "SAS on / off"],
   ["1 … 0", "SAS: hold, prograde, retrograde, normal, anti-normal, radial out, radial in, target, anti-target, maneuver"],
-  ["R", "RCS on / off"],
-  ["Caps Lock", "Fine control (25 %)"],
-  ["V", "Speed reference: orbit / surface / target"],
-  ["Y", "Cycle target body"],
-  ["M", "Map view (click the trajectory to add a maneuver node)"],
   ["G", "Ground track (map view)"],
   ["Delete", "Delete the selected maneuver node"],
+  ["Click (cockpit)", "Press a console key"],
 ];
 
 export class SettingsPanel {
@@ -165,6 +150,28 @@ export class SettingsPanel {
                 this.row("Invert throttle", this.toggle(c.hotas.invertThrottle, (v) => up((x) => (x.controls.hotas.invertThrottle = v)))),
               ]
             : []),
+          h("div", { class: "panel-title sub" }, "KEY BINDINGS"),
+          h(
+            "table",
+            { class: "keys" },
+            ...(Object.keys(ACTIONS) as Action[]).map((a) => {
+              const btn = h("button", { class: "rebind", title: "Click, then press a key (Esc cancels)" }, keyLabel(codeOf(c.bindings ?? {}, a)));
+              btn.onclick = () => {
+                btn.textContent = "press a key…";
+                const on = (e: KeyboardEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.removeEventListener("keydown", on, true);
+                  if (e.code !== "Escape") up((x) => (x.controls.bindings = { ...(x.controls.bindings ?? {}), [a]: e.code }));
+                  this.draw();
+                };
+                window.addEventListener("keydown", on, true);
+              };
+              return h("tr", {}, h("td", {}, ACTIONS[a][0]), h("td", { class: "key" }, btn));
+            }),
+          ),
+          h("div", { class: "menu-footer" }, h("button", { onclick: () => (up((x) => (x.controls.bindings = {})), this.draw()) }, "Reset key bindings")),
+          h("div", { class: "panel-title sub" }, "FIXED KEYS"),
           h("table", { class: "keys" }, ...KEYBINDINGS.map(([k, d]) => h("tr", {}, h("td", { class: "key" }, k), h("td", {}, d)))),
         );
       }
@@ -195,9 +202,10 @@ export class SettingsPanel {
           "div",
           {},
           this.row("Master volume", this.slider(s.audio.master, 0, 1, 0.01, (v) => up((x) => (x.audio.master = v)), (v) => `${Math.round(v * 100)}%`)),
-          this.row("Music", this.slider(s.audio.music, 0, 1, 0.01, (v) => up((x) => (x.audio.music = v)), (v) => `${Math.round(v * 100)}%`)),
-          this.row("Effects", this.slider(s.audio.effects, 0, 1, 0.01, (v) => up((x) => (x.audio.effects = v)), (v) => `${Math.round(v * 100)}%`)),
-          h("p", { class: "note" }, "Audio arrives in M10; volumes are stored now."),
+          this.row("Effects", this.slider(s.audio.effects, 0, 1, 0.01, (v) => up((x) => (x.audio.effects = v)), (v) => `${Math.round(v * 100)}%`), "Engines, RCS, entry, staging"),
+          this.row("Ambience", this.slider(s.audio.ambience, 0, 1, 0.01, (v) => up((x) => (x.audio.ambience = v)), (v) => `${Math.round(v * 100)}%`), "Cabin fans in the cockpit"),
+          this.row("Interface", this.slider(s.audio.ui, 0, 1, 0.01, (v) => up((x) => (x.audio.ui = v)), (v) => `${Math.round(v * 100)}%`), "Clicks and the master caution chime"),
+          this.row("Vacuum sound", this.toggle(s.audio.vacuumSound, (v) => up((x) => (x.audio.vacuumSound = v))), "Off (physical): outside the vehicle, sound needs air. In the cockpit you always hear it through the structure."),
         );
       case "interface":
         return h(
@@ -205,6 +213,7 @@ export class SettingsPanel {
           {},
           this.row("HUD scale", this.slider(s.ui.hudScale, 0.75, 1.5, 0.05, (v) => up((x) => (x.ui.hudScale = v)), (v) => `${Math.round(v * 100)}%`)),
           this.row("Show FPS", this.toggle(s.ui.showFps, (v) => up((x) => (x.ui.showFps = v)))),
+          this.row("Units", this.select(s.ui.units, [["si", "SI (m, km, m/s)"], ["imperial", "Imperial (ft, nmi, ft/s)"]], (v) => up((x) => (x.ui.units = v))), "Display only: the simulation is SI throughout"),
           this.row(
             "Star visibility",
             this.select(s.ui.starBoost, [[1, "Physical"], [1000, "Enhanced (×1,000)"], [100000, "Planetarium (×100,000)"]], (v) => up((x) => (x.ui.starBoost = v))),

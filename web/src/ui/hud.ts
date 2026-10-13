@@ -5,7 +5,7 @@ import type { CabinData } from "../render/interior";
 import type { Simulation } from "../sim/simulation";
 import { PHYSICS_WARP_MAX, SAS_MODES, SPEED_REFS, WARP_LEVELS } from "../sim/simulation";
 import type { VehicleDef } from "../sim/vehicle";
-import { clear, fmtDuration, fmtLength, fmtWarp, h } from "./dom";
+import { clear, fmtDuration, fmtLength, fmtWarp, h, fmtSpeed } from "./dom";
 import { Navball } from "./navball";
 import { SAS_ICONS } from "./sasIcons";
 
@@ -180,7 +180,7 @@ export class Hud {
     // Speed in the selected reference.
     E.speedmode!.textContent = SPEED_REFS[c.speedRef]!.toUpperCase();
     const v = t.speeds[c.speedRef] ?? NaN;
-    E.speed!.textContent = Number.isFinite(v) ? (v >= 1000 ? `${(v / 1000).toFixed(3)} km/s` : `${v.toFixed(1)} m/s`) : "—";
+    E.speed!.textContent = fmtSpeed(v);
 
     // Navball.
     const q = s.attitude();
@@ -330,7 +330,7 @@ export class Hud {
       const geo = s.geodeticAltitude();
       this.els.alt!.textContent = fmtLength(o[9]!);
       this.els.geo!.textContent = Number.isFinite(geo) ? fmtLength(geo) : "—";
-      this.els.spd!.textContent = `${(o[10]! / 1000).toFixed(4)} km/s`;
+      this.els.spd!.textContent = fmtSpeed(o[10]!, 4);
       this.els.ap!.textContent = fmtLength(o[7]!);
       this.els.pe!.textContent = fmtLength(o[6]!);
       this.els.inc!.textContent = `${((o[2]! * 180) / Math.PI).toFixed(3)}°`;

@@ -10,6 +10,7 @@
 
 import type { ControlSettings } from "../settings";
 import type { FlightControls } from "../sim/simulation";
+import { codeOf, type Action } from "./keymap";
 
 /** Throttle change per second while Shift/Ctrl (or a trigger) is held. */
 const THROTTLE_RATE = 0.5;
@@ -50,23 +51,21 @@ export class FlightInput {
     else this.keys.delete(e.code);
     if (!this.enabled || !down || e.repeat) return;
     const c = this.controls();
+    const b = (a: Action) => codeOf(this.settings().bindings ?? {}, a);
     if (e.code in SAS_KEYS) {
       c.sas = SAS_KEYS[e.code]!;
       this.lastSas = c.sas;
     }
-    switch (e.code) {
-      case "KeyT":
-        if (c.sas === 0) c.sas = this.lastSas || 1;
-        else (this.lastSas = c.sas), (c.sas = 0);
-        break;
-      case "KeyR": c.rcs = !c.rcs; break;
-      case "CapsLock": c.fine = !c.fine; break;
-      case "KeyV": c.speedRef = (c.speedRef + 1) % 3; break;
-      case "KeyZ": c.throttle = 1; break;
-      case "KeyX": c.throttle = 0; break;
-      case "KeyY": this.events.cycleTarget(); break;
-      default: return;
-    }
+    if (e.code === b("sas")) {
+      if (c.sas === 0) c.sas = this.lastSas || 1;
+      else (this.lastSas = c.sas), (c.sas = 0);
+    } else if (e.code === b("rcs")) c.rcs = !c.rcs;
+    else if (e.code === b("fine")) c.fine = !c.fine;
+    else if (e.code === b("speedRef")) c.speedRef = (c.speedRef + 1) % 3;
+    else if (e.code === b("throttleFull")) c.throttle = 1;
+    else if (e.code === b("throttleCut")) c.throttle = 0;
+    else if (e.code === b("target")) this.events.cycleTarget();
+    else return;
     e.preventDefault();
   }
 
@@ -74,12 +73,13 @@ export class FlightInput {
   update(dt: number): void {
     if (!this.enabled) return;
     const c = this.controls();
-    const k = (code: string) => (this.keys.has(code) ? 1 : 0);
     const s = this.settings();
+    const kc = (code: string) => (this.keys.has(code) ? 1 : 0);
+    const k = (a: Action) => kc(codeOf(s.bindings ?? {}, a));
     const target = {
-      pitch: k("KeyS") - k("KeyW"), // S pulls the nose up (+pitch about body Y)
-      yaw: k("KeyD") - k("KeyA"),
-      roll: k("KeyE") - k("KeyQ"),
+      pitch: k("pitchUp") - k("pitchDown"), // S pulls the nose up (+pitch about body Y)
+      yaw: k("yawRight") - k("yawLeft"),
+      roll: k("rollRight") - k("rollLeft"),
     };
     for (const a of ["roll", "pitch", "yaw"] as const) {
       const t = target[a];
@@ -88,12 +88,15 @@ export class FlightInput {
       this.ramp[a] = t === 0 ? 0 : Math.max(-1, Math.min(1, r + Math.sign(t - r) * Math.min(step, Math.abs(t - r))));
     }
     let roll = this.ramp.roll, pitch = this.ramp.pitch, yaw = this.ramp.yaw;
-    let tx = k("KeyH") - k("KeyN");
-    let ty = k("KeyL") - k("KeyJ");
-    let tz = k("KeyK") - k("KeyI"); // body +Z is "down"
-    let dThrottle = (k("ShiftLeft") || k("ShiftRight") ? 1 : 0) - (k("ControlLeft") || k("ControlRight") ? 1 : 0);
+    let tx = k("transFwd") - k("transBack");
+    let ty = k("transRight") - k("transLeft");
+    let tz = k("transDown") - k("transUp"); // body +Z is "down"
+    // With the default bindings, the right-hand Shift/Ctrl work too.
+    const up = k("throttleUp") || (codeOf(s.bindings ?? {}, "throttleUp") === "ShiftLeft" && kc("ShiftRight"));
+    const dn = k("throttleDown") || (codeOf(s.bindings ?? {}, "throttleDown") === "ControlLeft" && kc("ControlRight"));
+    let dThrottle = (up ? 1 : 0) - (dn ? 1 : 0);
     let absThrottle: number | null = null;
-    let stagePressed = k("Space") === 1;
+    let stagePressed = k("stage") === 1;
 
     // Gamepads.
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];

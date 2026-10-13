@@ -39,8 +39,12 @@ export interface SimSettings {
 
 export interface AudioSettings {
   master: number;
-  music: number;
   effects: number;
+  /** Cabin fans and hum. */
+  ambience: number;
+  ui: number;
+  /** Hear engines outside the vehicle in vacuum (unphysical; off by default). */
+  vacuumSound: boolean;
 }
 
 export interface InterfaceSettings {
@@ -48,6 +52,8 @@ export interface InterfaceSettings {
   showFps: boolean;
   /** Artistic boost of star and Milky Way brightness (1 = physical). */
   starBoost: number;
+  /** Display units (the physics is SI regardless). */
+  units: "si" | "imperial";
 }
 
 export interface HotasMapping {
@@ -70,6 +76,8 @@ export interface ControlSettings {
   invertCameraX: boolean;
   invertCameraY: boolean;
   hotas: HotasMapping;
+  /** Key rebinding (KeyboardEvent.code per action; missing = default). */
+  bindings: import("./ui/keymap").Bindings;
 }
 
 /** Google Photorealistic 3D Tiles near the surface. */
@@ -134,10 +142,11 @@ export function defaultSettings(): Settings {
     version: 1,
     graphics: { preset: "high", depthMode: "auto", ...GRAPHICS_PRESETS.high },
     sim: { rtol: 1e-12, earthDegree: 8, thirdBody: true, harmonics: true, drag: true, srp: true, f107: 150, f107a: 150, ap: 4 },
-    audio: { master: 0.8, music: 0.6, effects: 0.8 },
-    ui: { hudScale: 1, showFps: false, starBoost: 1 },
+    audio: { master: 0.8, effects: 0.8, ambience: 0.6, ui: 0.6, vacuumSound: false },
+    ui: { hudScale: 1, showFps: false, starBoost: 1, units: "si" },
     earth: { tiles: true, source: "auto", ionToken: "", apiKey: "", tileError: 12 },
     controls: {
+      bindings: {},
       deadzone: 0.08,
       invertPitch: false,
       invertCameraX: false,
@@ -207,7 +216,7 @@ export class SettingsStore {
         sim: { ...d.sim, ...parsed.sim },
         audio: { ...d.audio, ...parsed.audio },
         ui: { ...d.ui, ...parsed.ui },
-        controls: { ...d.controls, ...parsed.controls, hotas: { ...d.controls.hotas, ...parsed.controls?.hotas } },
+        controls: { ...d.controls, ...parsed.controls, hotas: { ...d.controls.hotas, ...parsed.controls?.hotas }, bindings: { ...parsed.controls?.bindings } },
         earth: { ...d.earth, ...parsed.earth },
       };
     } catch {

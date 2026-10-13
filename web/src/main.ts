@@ -8,6 +8,9 @@ import { CAMERA_MODE_NAMES, FOCUS_SPACECRAFT, World, type CameraMode, type World
 import { listSaves, storeSave, type SaveGame } from "./sim/saves";
 import { FlightRecorder } from "./sim/recorder";
 import { ReplayPlayer } from "./ui/replay";
+import { GameAudio } from "./ui/audio";
+import { setDisplayUnits } from "./ui/dom";
+import { codeOf, type Action } from "./ui/keymap";
 import { loadStars } from "./render/sky";
 import { Menus } from "./ui/menus";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -254,6 +257,11 @@ async function main(): Promise<void> {
   const core = await loadCore();
   const bodies: BodyRow[] = core.bodies;
   const sim = new Simulation();
+  const audio = new GameAudio();
+  // Browsers allow audio only after a gesture; UI clicks get a click sound.
+  addEventListener("pointerdown", () => audio.resume(), { capture: true });
+  addEventListener("keydown", () => audio.resume(), { capture: true });
+  addEventListener("click", (e) => (e.target as HTMLElement | null)?.closest?.("button") && audio.click(), { capture: true });
   const recorder = new FlightRecorder();
   const replay = new ReplayPlayer(sim, recorder);
   const scenario: Scenario = testScene === "saturn-jitter" ? SATURN_TEST : SCENARIOS[0]!;
@@ -455,9 +463,13 @@ async function main(): Promise<void> {
       return;
     }
     if (!inGame) return;
-    switch (e.key) {
-      case ".": sim.warpUp(); break;
-      case ",": sim.warpDown(); break;
+    // Rebindable game keys (Settings → Controls).
+    const bind = (x: Action) => codeOf(store.get().controls.bindings ?? {}, x);
+    if (e.code === bind("warpUp")) return sim.warpUp();
+    if (e.code === bind("warpDown")) return sim.warpDown();
+    const alias: Record<string, string> = { [bind("map")]: "m", [bind("camera")]: "c", [bind("quicksave")]: "F5", [bind("quickload")]: "F9" };
+    const key = alias[e.code] ?? (["m", "M", "c", "C", "F5", "F9"].includes(e.key) ? "" : e.key);
+    switch (key) {
       case "/": sim.warpIndex = 0; break;
       case "p": case "P": sim.paused = !sim.paused; break;
       case "]": world.cycleFocus(1); break;
@@ -538,7 +550,25 @@ async function main(): Promise<void> {
     mapView.keysFine = sim.controls.fine;
     mapView.update(dt);
     attribution.update(world.tiles ? { ...world.tiles.attributions(), google: world.tiles.google } : null, hud.root);
+    setDisplayUnits(store.get().ui.units);
     engine.render(dt, world.atmo);
+    {
+      const a = store.get().audio;
+      audio.setMix(a);
+      const tel = inGame && sim.hasVehicle ? sim.telemetry() : null;
+      const thrust = tel ? tel.engines.reduce((m, e, i) => Math.max(m, e.thrust / Math.max(sim.scenario?.vehicle?.def.engines[i]?.thrust_vac ?? 1, 1)), 0) : 0;
+      audio.update({
+        thrust,
+        rcs: tel ? tel.rcs.flat().reduce((x, y) => x + y, 0) : 0,
+        q: tel?.q ?? 0,
+        pAmb: tel?.pAmb ?? 0,
+        cockpit: world.cameraMode === "cockpit" && world.focus === FOCUS_SPACECRAFT && !mapView.active,
+        stages: inGame ? Array.from(sim.sim.attachedStages()).filter((x) => x !== 0).length : 0,
+        outcome: inGame ? sim.sim.outcome() : "flying",
+        caution: !!tel && (tel.heat > 3e5 || tel.q > 3e4),
+        silent: !inGame || sim.paused || sim.warp > 10 || replay.active,
+      });
+    }
     hud.update(dt, world.focusName(), centerNames.get(world.centerId) ?? "?", { showFps: store.get().ui.showFps, depth: engine.depth });
   };
 
