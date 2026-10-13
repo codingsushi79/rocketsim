@@ -11,6 +11,7 @@ import { SettingsPanel } from "./ui/settingsPanel";
 import { Hud, TARGET_CYCLE } from "./ui/hud";
 import { FlightInput } from "./ui/input";
 import { VehicleView } from "./render/spacecraft";
+import { TransferPlanner } from "./ui/transferPlanner";
 import { MapView } from "./render/mapView";
 import { CloudPass } from "./render/clouds";
 import { loadHeightGrid, type HeightGrid } from "./render/planetSurface";
@@ -357,7 +358,9 @@ async function main(): Promise<void> {
   };
   hud.onMainMenu = () => menus.actions.toMainMenu();
   const mapView = new MapView(engine, world, sim, bodies);
-  ui.append(mapView.overlay, mapView.panel, mapView.track, menus.root, hud.root, attribution.root);
+  const planner = new TransferPlanner(sim, bodies);
+  mapView.onActiveChange = (on) => planner.setActive(on && sim.hasVehicle);
+  ui.append(mapView.overlay, mapView.panel, mapView.track, planner.root, menus.root, hud.root, attribution.root);
   const syncCamera = (s: ReturnType<typeof store.get>) => {
     world.camera.invertX = s.controls.invertCameraX;
     world.camera.invertY = s.controls.invertCameraY;

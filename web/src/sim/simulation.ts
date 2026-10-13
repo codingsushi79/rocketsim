@@ -3,7 +3,7 @@
 
 import { Sim } from "../wasm/sim_wasm.js";
 import type { SimSettings } from "../settings";
-import { RS1, type Telemetry, type VehicleSource } from "./vehicle";
+import { RS1, RS1_MDS, type Telemetry, type VehicleSource } from "./vehicle";
 import type { AutopilotJson, PlanJson } from "../render/mapView";
 
 /** Warp levels, 1× to 10,000,000× (spec §2.2). */
@@ -49,6 +49,8 @@ export interface Scenario {
   periapsisAltM?: number;
   /** Fly this vehicle (6-DOF); without it, a cannonball of `massKg`. */
   vehicle?: VehicleSource;
+  /** Preselected target body (the transfer planner opens on it). */
+  target?: number;
 }
 
 export const SCENARIOS: Scenario[] = [
@@ -92,6 +94,32 @@ export const SCENARIOS: Scenario[] = [
     raanDeg: 40.579 + 90,
     massKg: 24_960,
     vehicle: RS1,
+  },
+  {
+    id: "lunar-flyby",
+    name: "Lunar flyby",
+    description: "RS-1 in a 400 km orbit, Moon targeted. Open the map (M) and the transfer planner: pick a departure in the porkchop, plan, and let the autopilot fly the translunar injection and the midcourse correction. Flyby periapsis is corrected on the full n-body model.",
+    epochUtc: "2026-11-01T00:00:00Z",
+    center: 399,
+    altitudeM: 400e3,
+    inclinationDeg: 28.5,
+    raanDeg: 200,
+    massKg: 24_960,
+    vehicle: RS1,
+    target: 301,
+  },
+  {
+    id: "earth-mars",
+    name: "Earth → Mars",
+    description: "The November 2026 window. RS-1 with a Mars departure stage (MDS, LOX/LH2, ~2.5 km/s) in a 400 km orbit, Mars targeted. Plan the departure in the porkchop (≈ 3.6 km/s), burn the MDS dry, separate it and finish with the RS-1. Cruise ≈ 200–300 days: use time warp.",
+    epochUtc: "2026-11-01T00:00:00Z",
+    center: 399,
+    altitudeM: 400e3,
+    inclinationDeg: 28.5,
+    raanDeg: 200,
+    massKg: 49_360,
+    vehicle: RS1_MDS,
+    target: 499,
   },
 ];
 
@@ -166,6 +194,7 @@ export class Simulation {
     this.warpIndex = 0;
     this.paused = false;
     this.targetId = -1;
+    if (sc.target !== undefined && sc.vehicle) this.setTarget(sc.target);
   }
 
   get warp(): number {

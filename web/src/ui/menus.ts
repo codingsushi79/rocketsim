@@ -45,16 +45,12 @@ export class Menus {
           h("button", { id: "btn-credits", onclick: () => this.credits() }, "Credits"),
           isDesktop() ? h("button", { id: "btn-quit", onclick: () => void quitApp() }, "Quit to Desktop") : null,
         ),
-        h("div", { class: "version" }, `sim-core ${this.version} · milestone 8 build${isDesktop() ? " · desktop" : ""}`),
+        h("div", { class: "version" }, `sim-core ${this.version} · milestone 10 build${isDesktop() ? " · desktop" : ""}`),
       ),
     );
   }
 
   missions(): void {
-    const upcoming = [
-      { name: "Lunar flyby", note: "Transfer planner arrives in M9" },
-      { name: "Earth → Mars", note: "Transfer planner arrives in M9" },
-    ];
     this.show(
       h(
         "div",
@@ -71,9 +67,6 @@ export class Menus {
               h("div", { class: "mission-desc" }, s.description),
               h("div", { class: "mission-epoch" }, `Epoch ${s.epochUtc.replace("T", " ").replace("Z", " UTC")}`),
             ),
-          ),
-          ...upcoming.map((u) =>
-            h("button", { class: "mission", disabled: true }, h("div", { class: "mission-name" }, u.name), h("div", { class: "mission-desc" }, u.note)),
           ),
         ),
         h("div", { class: "menu-footer" }, h("button", { onclick: () => this.main() }, "Back")),

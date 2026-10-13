@@ -194,3 +194,96 @@ fn mars_2026_window() {
     // Hohmann LEO → Mars ≈ 3.6 km/s; the 2026 opportunity is a little costlier than ideal.
     assert!((3_400.0..4_200.0).contains(dv), "{dv}");
 }
+
+#[test]
+fn lunar_plan_from_an_inclined_parking_orbit() {
+    use sim_core::kepler::Elements;
+    use sim_core::prediction::EngineModel;
+    let mut e = Ephemeris::new();
+    e.load(include_bytes!("fixtures/ephem_2026q4.rseph"))
+        .unwrap();
+    let reg = BodyRegistry::builtin();
+    // As the "Lunar flyby" mission: 400 km, 28.5°, node 200°.
+    let r = 6_378_137.0 + 400e3;
+    let el = Elements {
+        p: r,
+        a: r,
+        e: 0.0,
+        i: 28.5f64.to_radians(),
+        raan: 200f64.to_radians(),
+        argp: 0.0,
+        nu: 0.0,
+    };
+    let (rv, vv) = el.to_state(gm::EARTH);
+    let park = Parking {
+        center: BodyId::EARTH,
+        epoch: t0(),
+        r: rv,
+        v: vv,
+        mu: gm::EARTH,
+    };
+    let period = 2.0 * std::f64::consts::PI * (r * r * r / gm::EARTH).sqrt();
+    let pc = transfer::porkchop(
+        &e,
+        &reg,
+        &park,
+        BodyId::MOON,
+        t0().add_seconds(600.0),
+        t0().add_seconds(600.0 + period),
+        48,
+        3.0 * 86_400.0,
+        6.0 * 86_400.0,
+        24,
+    );
+    let (k, dv) = pc
+        .dv
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.is_finite())
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap();
+    eprintln!(
+        "inclined: best {dv:.0} m/s tof {:.2} d",
+        pc.tof[k % 24] / 86_400.0
+    );
+    let s0 = ScState {
+        epoch: t0(),
+        state: State::new(
+            rv,
+            vv,
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass: 24_960.0,
+    };
+    let p = Propagator::new(&e, &reg);
+    let eng = Some(EngineModel {
+        thrust: 66_723.0,
+        isp: 318.0,
+    });
+    let res = transfer::plan(
+        &p,
+        &e,
+        &reg,
+        &s0,
+        &park,
+        eng,
+        &HorizonPolicy::default(),
+        BodyId::MOON,
+        Epoch::from_tdb_seconds(pc.dep[k / 24]),
+        pc.tof[k % 24],
+        1_737_400.0 + 200e3,
+    );
+    if let Err(err) = &res {
+        eprintln!("inclined: ERR {err:?}");
+    }
+    let (plan, miss) = res.unwrap();
+    eprintln!(
+        "inclined: TLI {:.0} MCC {:.1} miss {:.1} km",
+        plan[0].dv_magnitude(),
+        plan[1].dv_magnitude(),
+        miss / 1000.0
+    );
+    assert!(miss.abs() < 20e3);
+}

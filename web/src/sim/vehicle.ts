@@ -3,6 +3,7 @@
 // HUD need. Body frame: +X forward along the stack, metres.
 
 import rs1Text from "../../../data/vehicles/rs1_corvid.json?raw";
+import rs1MdsText from "../../../data/vehicles/rs1_mds.json?raw";
 
 export type Vec3 = [number, number, number];
 
@@ -30,6 +31,7 @@ export function vehicleSource(text: string): VehicleSource {
 }
 
 export const RS1 = vehicleSource(rs1Text);
+export const RS1_MDS = vehicleSource(rs1MdsText);
 
 /** Flight telemetry (JSON from `Sim.telemetry`), SI units. */
 export interface Telemetry {

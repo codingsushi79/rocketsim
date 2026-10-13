@@ -618,6 +618,40 @@ pub fn plan(
     let lead = (0.25 * tof).min(43_200.0);
     let t_aim = t_arr.add_seconds(-lead);
     let point = side * b - v_rel_dir * (vi * lead);
+    // 0. Energy: finite-burn losses (and any plane change in the first guess) leave the
+    // patched-conic burn short, and close to the escape energy the arrival position is so
+    // nonlinear in Δv that Gauss–Newton stalls. A 1-D secant on the prograde Δv first makes
+    // the distance from the central body at the aim time right.
+    let mut node = node;
+    if let Ok(tc) = eph.state_relative(target, parking.center, t_aim) {
+        let want = (tc.r + point).norm();
+        let dist = |n: &ManeuverNode| {
+            relative_at(p, eph, s0, &[*n], engine, policy, target, t_aim)
+                .map(|rel| (rel + tc.r).norm() - want)
+        };
+        let (mut x0, mut x1) = (node.prograde, node.prograde + 20.0);
+        let mut f0 = dist(&node);
+        let mut n1 = node;
+        n1.prograde = x1;
+        let mut f1 = dist(&n1);
+        for _ in 0..20 {
+            let (Ok(a), Ok(b)) = (f0.clone(), f1.clone()) else {
+                break;
+            };
+            if b.abs() < 0.01 * want || (b - a).abs() < 1e-9 {
+                break;
+            }
+            let x2 = (x1 - b * (x1 - x0) / (b - a)).clamp(x1 - 200.0, x1 + 200.0);
+            x0 = x1;
+            f0 = f1;
+            x1 = x2;
+            n1.prograde = x1;
+            f1 = dist(&n1);
+        }
+        if f1.as_ref().is_ok_and(|v| v.abs() < 0.1 * want) {
+            node = n1;
+        }
+    }
     // 1. Departure: in-plane aim (the plane of the parking orbit) with prograde, radial, time.
     let hp = parking.r.cross(parking.v).normalized().unwrap_or(h);
     let e1 = (point - hp * point.dot(hp)).normalized().unwrap_or(side);

@@ -192,8 +192,12 @@ export class MapView {
     window.addEventListener("pointerup", () => this.endDrag());
   }
 
+  /** Called when the map opens or closes (the transfer planner follows it). */
+  onActiveChange: ((on: boolean) => void) | null = null;
+
   setActive(on: boolean): void {
     this.active = on;
+    this.onActiveChange?.(on);
     this.world.mapMode = on;
     this.overlay.classList.toggle("hidden", !on);
     this.panel.classList.toggle("hidden", !on);

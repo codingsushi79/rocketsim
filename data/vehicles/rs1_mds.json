@@ -1,0 +1,964 @@
+{
+  "name": "RS-1 Corvid + MDS",
+  "description": "RS-1 Corvid with a Mars departure stage (MDS): a LOX/LH2 kick stage with one RL10C-1-class engine (101.8 kN, Isp 449.7 s vacuum; Aerojet Rocketdyne RL10C-1 data sheet), 21.6 t of propellant at mixture ratio 5.5 and 2.8 t dry. About 2.5 km/s for the stack, then the RS-1's own 3.45 km/s. Decision D5 foresaw a data-defined kick stage for Mars.",
+  "model": "models/rs1_mds.glb",
+  "stages": [
+    {
+      "id": "mds",
+      "name": "Mars departure stage",
+      "separation_dv": 0.5,
+      "aero": {
+        "cd": 0.9,
+        "drag_area": 10.2,
+        "cr": 1.3,
+        "srp_area": 30.0,
+        "nose_radius": 1.8,
+        "max_dynamic_pressure": 35000.0,
+        "max_heat_flux": 150000.0,
+        "max_impact_speed": 2.0
+      }
+    },
+    {
+      "id": "sm",
+      "name": "Service module",
+      "separation_dv": 0.6,
+      "aero": {
+        "cd": 2.2,
+        "drag_area": 30.0,
+        "cr": 1.3,
+        "srp_area": 30.0,
+        "nose_radius": 1.95,
+        "max_dynamic_pressure": 35000.0,
+        "max_heat_flux": 150000.0,
+        "max_impact_speed": 2.0
+      }
+    },
+    {
+      "id": "cm",
+      "name": "Crew module",
+      "separation_dv": 0.0,
+      "aero": {
+        "cd": 1.3,
+        "drag_area": 11.95,
+        "cr": 1.3,
+        "srp_area": 8.86,
+        "nose_radius": 4.69,
+        "max_dynamic_pressure": 120000.0,
+        "max_heat_flux": 6000000.0,
+        "max_impact_speed": 12.0
+      }
+    }
+  ],
+  "parts": [
+    {
+      "id": "heat_shield",
+      "kind": "heat_shield",
+      "stage": "cm",
+      "mass": 850.0,
+      "shape": {
+        "cylinder": {
+          "radius": 1.95,
+          "length": 0.15
+        }
+      },
+      "position": [
+        0.075,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "crew_module",
+      "kind": "capsule",
+      "stage": "cm",
+      "mass": 3560.0,
+      "shape": {
+        "cone": {
+          "base_radius": 1.95,
+          "height": 3.3
+        }
+      },
+      "position": [
+        0.15,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "docking_port",
+      "kind": "docking_port",
+      "stage": "cm",
+      "mass": 150.0,
+      "shape": {
+        "cylinder": {
+          "radius": 0.45,
+          "length": 0.4
+        }
+      },
+      "position": [
+        3.45,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "sm_structure",
+      "kind": "service_module",
+      "stage": "sm",
+      "mass": 2780.0,
+      "shape": {
+        "cylinder_shell": {
+          "radius": 1.95,
+          "length": 4.0
+        }
+      },
+      "position": [
+        -2.0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "main_engine",
+      "kind": "engine",
+      "stage": "sm",
+      "mass": 300.0,
+      "shape": {
+        "cone_shell": {
+          "base_radius": 0.7,
+          "height": 2.0
+        }
+      },
+      "position": [
+        -6.0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "solar_wing_py",
+      "kind": "solar_array",
+      "stage": "sm",
+      "mass": 110.0,
+      "shape": {
+        "box": {
+          "size": [
+            1.8,
+            6.5,
+            0.04
+          ]
+        }
+      },
+      "position": [
+        -2.6,
+        5.2,
+        0
+      ]
+    },
+    {
+      "id": "solar_wing_my",
+      "kind": "solar_array",
+      "stage": "sm",
+      "mass": 110.0,
+      "shape": {
+        "box": {
+          "size": [
+            1.8,
+            6.5,
+            0.04
+          ]
+        }
+      },
+      "position": [
+        -2.6,
+        -5.2,
+        0
+      ]
+    },
+    {
+      "id": "mds_interstage",
+      "stage": "mds",
+      "kind": "interstage",
+      "mass": 420.0,
+      "position": [
+        -9.5,
+        0,
+        0
+      ],
+      "shape": {
+        "cylinder_shell": {
+          "radius": 1.95,
+          "length": 3.0
+        }
+      }
+    },
+    {
+      "id": "mds_structure",
+      "stage": "mds",
+      "kind": "stage_structure",
+      "mass": 2080.0,
+      "position": [
+        -14.6,
+        0,
+        0
+      ],
+      "shape": {
+        "cylinder_shell": {
+          "radius": 1.9,
+          "length": 7.2
+        }
+      }
+    },
+    {
+      "id": "mds_engine",
+      "stage": "mds",
+      "kind": "engine",
+      "mass": 300.0,
+      "position": [
+        -18.2,
+        0,
+        0
+      ],
+      "shape": {
+        "cone_shell": {
+          "base_radius": 0.75,
+          "height": 2.3
+        }
+      }
+    }
+  ],
+  "tanks": [
+    {
+      "id": "mmh_1",
+      "stage": "sm",
+      "propellant": "MMH",
+      "capacity": 3150.0,
+      "shape": {
+        "cylinder": {
+          "radius": 0.62,
+          "length": 3.0
+        }
+      },
+      "position": [
+        -2.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "id": "mmh_2",
+      "stage": "sm",
+      "propellant": "MMH",
+      "capacity": 3150.0,
+      "shape": {
+        "cylinder": {
+          "radius": 0.62,
+          "length": 3.0
+        }
+      },
+      "position": [
+        -2.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "id": "nto_1",
+      "stage": "sm",
+      "propellant": "NTO",
+      "capacity": 5200.0,
+      "shape": {
+        "cylinder": {
+          "radius": 0.62,
+          "length": 3.0
+        }
+      },
+      "position": [
+        -2.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "nto_2",
+      "stage": "sm",
+      "propellant": "NTO",
+      "capacity": 5200.0,
+      "shape": {
+        "cylinder": {
+          "radius": 0.62,
+          "length": 3.0
+        }
+      },
+      "position": [
+        -2.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "id": "rcs_mmh",
+      "stage": "sm",
+      "propellant": "MMH",
+      "capacity": 113.0,
+      "shape": {
+        "sphere": {
+          "radius": 0.31
+        }
+      },
+      "position": [
+        -0.5,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "rcs_nto",
+      "stage": "sm",
+      "propellant": "NTO",
+      "capacity": 187.0,
+      "shape": {
+        "sphere": {
+          "radius": 0.31
+        }
+      },
+      "position": [
+        -3.5,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "cm_n2h4_1",
+      "stage": "cm",
+      "propellant": "N2H4",
+      "capacity": 50.0,
+      "shape": {
+        "sphere": {
+          "radius": 0.23
+        }
+      },
+      "position": [
+        1.0,
+        0.9,
+        0.0
+      ]
+    },
+    {
+      "id": "cm_n2h4_2",
+      "stage": "cm",
+      "propellant": "N2H4",
+      "capacity": 50.0,
+      "shape": {
+        "sphere": {
+          "radius": 0.23
+        }
+      },
+      "position": [
+        1.0,
+        -0.9,
+        0.0
+      ]
+    },
+    {
+      "id": "mds_lh2",
+      "stage": "mds",
+      "propellant": "LH2",
+      "capacity": 3320.0,
+      "shape": {
+        "cylinder": {
+          "radius": 1.8,
+          "length": 4.6
+        }
+      },
+      "position": [
+        -13.3,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "mds_lox",
+      "stage": "mds",
+      "propellant": "LOX",
+      "capacity": 18280.0,
+      "shape": {
+        "cylinder": {
+          "radius": 1.75,
+          "length": 1.7
+        }
+      },
+      "position": [
+        -16.6,
+        0,
+        0
+      ]
+    }
+  ],
+  "engines": [
+    {
+      "id": "mds_main",
+      "stage": "mds",
+      "position": [
+        -20.5,
+        0,
+        0
+      ],
+      "direction": [
+        1,
+        0,
+        0
+      ],
+      "thrust_vac": 101800.0,
+      "isp_vac": 449.7,
+      "exit_area": 1.65,
+      "throttle_min": 1.0,
+      "ignitions": 5,
+      "min_on_time": 0.4,
+      "gimbal_max_deg": 4.0,
+      "gimbal_rate_deg_s": 10.0,
+      "feed": {
+        "fuel_tanks": [
+          "mds_lh2"
+        ],
+        "oxidizer_tanks": [
+          "mds_lox"
+        ],
+        "mixture_ratio": 5.5
+      }
+    },
+    {
+      "id": "main",
+      "stage": "sm",
+      "position": [
+        -4.0,
+        0,
+        0
+      ],
+      "direction": [
+        1,
+        0,
+        0
+      ],
+      "thrust_vac": 66723.0,
+      "isp_vac": 318.0,
+      "exit_area": 1.54,
+      "throttle_min": 0.4,
+      "ignitions": 50,
+      "min_on_time": 0.4,
+      "gimbal_max_deg": 6.0,
+      "gimbal_rate_deg_s": 10.0,
+      "feed": {
+        "fuel_tanks": [
+          "mmh_1",
+          "mmh_2"
+        ],
+        "oxidizer_tanks": [
+          "nto_1",
+          "nto_2"
+        ],
+        "mixture_ratio": 1.65
+      }
+    }
+  ],
+  "rcs": [
+    {
+      "id": "sm_rcs",
+      "stage": "sm",
+      "thrust_vac": 445.0,
+      "isp_vac": 290.0,
+      "feed": {
+        "fuel_tanks": [
+          "rcs_mmh"
+        ],
+        "oxidizer_tanks": [
+          "rcs_nto"
+        ],
+        "mixture_ratio": 1.65
+      },
+      "thrusters": [
+        {
+          "position": [
+            -0.5,
+            2.1,
+            0.0
+          ],
+          "direction": [
+            1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            2.1,
+            0.0
+          ],
+          "direction": [
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            2.1,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            2.1,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            0.0,
+            2.1
+          ],
+          "direction": [
+            1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            0.0,
+            2.1
+          ],
+          "direction": [
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            0.0,
+            2.1
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            0.0,
+            2.1
+          ],
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -2.1,
+            0.0
+          ],
+          "direction": [
+            1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -2.1,
+            0.0
+          ],
+          "direction": [
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -2.1,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -2.1,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -0.0,
+            -2.1
+          ],
+          "direction": [
+            1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -0.0,
+            -2.1
+          ],
+          "direction": [
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -0.0,
+            -2.1
+          ],
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            -0.5,
+            -0.0,
+            -2.1
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cm_rcs",
+      "stage": "cm",
+      "thrust_vac": 440.0,
+      "isp_vac": 230.0,
+      "feed": {
+        "fuel_tanks": [
+          "cm_n2h4_1",
+          "cm_n2h4_2"
+        ]
+      },
+      "inhibited_while_attached": [
+        "sm"
+      ],
+      "thrusters": [
+        {
+          "position": [
+            2.6,
+            0.0,
+            0.502
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            0.6,
+            0.0,
+            -1.684
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "position": [
+            2.6,
+            0.0,
+            -0.502
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "position": [
+            0.6,
+            0.0,
+            1.684
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            2.6,
+            -0.502,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            0.6,
+            1.684,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            2.6,
+            0.502,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            0.6,
+            -1.684,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "position": [
+            1.6,
+            1.093,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "position": [
+            1.6,
+            -1.093,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            1.6,
+            1.093,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "position": [
+            1.6,
+            -1.093,
+            0.0
+          ],
+          "direction": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      ]
+    }
+  ],
+  "wheels": [
+    {
+      "id": "rw_x",
+      "stage": "sm",
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "max_torque": 0.2,
+      "max_momentum": 100.0
+    },
+    {
+      "id": "rw_y",
+      "stage": "sm",
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "max_torque": 0.2,
+      "max_momentum": 100.0
+    },
+    {
+      "id": "rw_z",
+      "stage": "sm",
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "max_torque": 0.2,
+      "max_momentum": 100.0
+    }
+  ],
+  "sas": {
+    "bandwidth": 0.4,
+    "max_rate_deg_s": 3.0,
+    "manual_rate_deg_s": 3.0
+  },
+  "cabin": {
+    "eye": [
+      1.3,
+      0.0,
+      0.1
+    ],
+    "forward": [
+      1,
+      0,
+      0
+    ],
+    "up": [
+      0,
+      0,
+      -1
+    ],
+    "vessel": {
+      "x0": 0.4,
+      "x1": 2.55,
+      "r0": 1.62,
+      "r1": 0.35
+    },
+    "tunnel": {
+      "radius": 0.3,
+      "length": 0.6
+    },
+    "windows": [
+      {
+        "name": "rendezvous left",
+        "x": 2.0,
+        "azimuth": -30,
+        "width": 0.34,
+        "height": 0.4
+      },
+      {
+        "name": "rendezvous right",
+        "x": 2.0,
+        "azimuth": 30,
+        "width": 0.34,
+        "height": 0.4
+      },
+      {
+        "name": "side left",
+        "x": 1.25,
+        "azimuth": -100,
+        "width": 0.34,
+        "height": 0.34
+      },
+      {
+        "name": "side right",
+        "x": 1.25,
+        "azimuth": 100,
+        "width": 0.34,
+        "height": 0.34
+      },
+      {
+        "name": "hatch",
+        "x": 1.6,
+        "azimuth": 0,
+        "width": 0.26,
+        "height": 0.26
+      }
+    ],
+    "seats": [
+      [
+        0.75,
+        -0.6,
+        0.1
+      ],
+      [
+        0.75,
+        0.0,
+        0.1
+      ],
+      [
+        0.75,
+        0.6,
+        0.1
+      ]
+    ],
+    "console": {
+      "x": 1.75,
+      "z": 0.42,
+      "width": 1.3,
+      "height": 0.5,
+      "tilt_deg": 40
+    }
+  }
+}
