@@ -578,6 +578,22 @@ Plan: `docs/plans/M10-polish.md`.
     veiling glare, Black Marble base layer removed;
   - plumes and plasma drawn after clouds (clouds no longer cover a plume).
 
+- **Playtest round (2026-10-13), played in the browser:**
+  - burns held in the orbit frame (prediction and autopilot): lunar TLI 3145 → 3118 m/s,
+    Mars departure 3885 → 3758 m/s; automatic course correction after each autopilot burn,
+    "Execute all" and "Correct course"; lunar flyby flown end to end: periapsis 204 km
+    (plan 200);
+  - moonlight (Allen phase law) on Earth's night side, clouds and the vehicle; earthshine
+    on the Moon and the vehicle around it;
+  - atmosphere limb (rays missing the ground ended 1 m out), realistic aerosol load
+    (AOD 0.10);
+  - clouds: no blocky texel-sized clouds, no stripes in the map view, drawn behind plumes;
+  - city lights with street structure; tile seams over the ocean removed;
+  - volumetric engine plumes that balloon as ambient pressure falls;
+  - windows on the outside of the hull and smooth openings inside; collapsible HUD panels
+    and F2 to hide the HUD;
+  - lunar poles without shading fans; no lens glare through the Moon.
+
 **Performance** (M4 integrated GPU, 2560×1440, GPU-synced, `PERF=1`)
 
 | Preset | Before M10 work | After |
@@ -590,7 +606,8 @@ Plan: `docs/plans/M10-polish.md`.
   al. 2007). Max keeps full resolution.
 - The sky is drawn in the main pass (one MSAA resolve per frame instead of two).
 - Measured remaining cost on High: MSAA 4× on fp16 about 5 ms, atmosphere 2.4 ms, clouds
-  4.4 ms, lens 2 ms.
+  4.4 ms, lens 2 ms. After the playtest round's visual fixes (refined cloud march, homogeneous
+  unresolved cloud columns) High is ≈ 21 ms; clouds ≈ 7 ms.
 
 **Verification**
 - `cargo test --workspace --release`: 149 pass. Clippy and fmt clean.
