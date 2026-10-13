@@ -1782,3 +1782,136 @@ fn slew_toward(from: V3, to: V3, max: f64) -> V3 {
     let (s, c) = fmath::sin_cos(max);
     (from * c + perp * s).normalized().unwrap_or(to)
 }
+
+/// A saved flight (M10 save files): the physical state plus the vehicle's internal state.
+/// Restoring starts a fresh trajectory at the saved epoch, so a given save always produces
+/// the same future (determinism, D8), but not bit-for-bit the uninterrupted run: the
+/// integrator's step sequence restarts at the snapshot. Plain arrays, so JSON round-trips
+/// every f64 exactly (serde_json writes shortest round-trip decimals).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FlightSnapshot {
+    pub epoch_tdb: f64,
+    pub center: i32,
+    pub r: [f64; 3],
+    pub v: [f64; 3],
+    pub attached: Vec<bool>,
+    pub tank: Vec<f64>,
+    /// Attitude body → ICRF, [w, x, y, z].
+    pub q: [f64; 4],
+    pub h_inertial: [f64; 3],
+    pub wheel_h: Vec<f64>,
+    pub engines: Vec<EngineSnapshot>,
+    pub desat: bool,
+    pub sas_target: Option<[f64; 4]>,
+    pub target: Option<i32>,
+    pub dv_expended: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EngineSnapshot {
+    pub running: bool,
+    pub on_time: f64,
+    pub ignitions_left: u32,
+    pub flameout: bool,
+}
+
+impl Flight {
+    /// The current flight as a snapshot; None unless flying (no saves of wrecks).
+    pub fn snapshot(&self) -> Option<FlightSnapshot> {
+        if self.status != FlightStatus::Flying {
+            return None;
+        }
+        let s = self.state_at(self.t_state)?;
+        let q4 = |q: Quat| [q.w, q.x, q.y, q.z];
+        let a3 = |v: V3| [v.x, v.y, v.z];
+        Some(FlightSnapshot {
+            epoch_tdb: self.t_state.tdb_seconds(),
+            center: s.state.frame.center.0,
+            r: a3(s.state.r),
+            v: a3(s.state.v),
+            attached: self.attached.clone(),
+            tank: self.tank.clone(),
+            q: q4(self.q),
+            h_inertial: a3(self.h_inertial),
+            wheel_h: self.wheel_h.clone(),
+            engines: self
+                .engines
+                .iter()
+                .map(|e| EngineSnapshot {
+                    running: e.running,
+                    on_time: e.on_time,
+                    ignitions_left: e.ignitions_left,
+                    flameout: e.flameout,
+                })
+                .collect(),
+            desat: self.desat,
+            sas_target: self.sas_target.map(q4),
+            target: self.target.map(|b| b.0),
+            dv_expended: self.dv_expended,
+        })
+    }
+
+    /// Rebuild a flight from a snapshot of the same vehicle configuration.
+    pub fn restore(
+        config: VehicleConfig,
+        snap: &FlightSnapshot,
+        prop: &Propagator,
+    ) -> Result<Flight, PropagationError> {
+        let bad = |w: &str| {
+            PropagationError::InvalidState(format!("save file: {w} does not match the vehicle"))
+        };
+        if snap.attached.len() != config.stages.len() {
+            return Err(bad("stages"));
+        }
+        if snap.tank.len() != config.tanks.len() {
+            return Err(bad("tanks"));
+        }
+        if snap.wheel_h.len() != config.wheels.len() {
+            return Err(bad("wheels"));
+        }
+        if snap.engines.len() != config.engines.len() {
+            return Err(bad("engines"));
+        }
+        let quat = |a: [f64; 4]| Quat {
+            w: a[0],
+            x: a[1],
+            y: a[2],
+            z: a[3],
+        };
+        let v3a = |a: [f64; 3]| V3::new(a[0], a[1], a[2]);
+        let s0 = ScState {
+            epoch: Epoch::from_tdb_seconds(snap.epoch_tdb),
+            state: State::new(
+                v3a(snap.r),
+                v3a(snap.v),
+                IcrfBody {
+                    center: BodyId(snap.center),
+                },
+            ),
+            mass: 1.0,
+        };
+        let mut f = Flight::new(config, &s0, quat(snap.q), prop)?;
+        f.attached = snap.attached.clone();
+        f.tank = snap.tank.clone();
+        f.h_inertial = v3a(snap.h_inertial);
+        f.wheel_h = snap.wheel_h.clone();
+        for (e, s) in f.engines.iter_mut().zip(&snap.engines) {
+            e.running = s.running;
+            e.on_time = s.on_time;
+            e.ignitions_left = s.ignitions_left;
+            e.flameout = s.flameout;
+        }
+        f.desat = snap.desat;
+        f.sas_target = snap.sas_target.map(quat);
+        f.target = snap.target.map(BodyId);
+        f.dv_expended = snap.dv_expended;
+        // Re-propagate with the restored mass.
+        let s = ScState {
+            mass: f.mass_props().mass,
+            ..s0
+        };
+        let p = f.propagator(prop, true);
+        f.traj = p.propagate(&s, s.epoch, &[])?;
+        Ok(f)
+    }
+}

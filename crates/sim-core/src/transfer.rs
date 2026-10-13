@@ -20,7 +20,7 @@ use crate::ephemeris::Ephemeris;
 use crate::kepler;
 use crate::lambert;
 use crate::maneuver::{ManeuverNode, orbit_frame};
-use crate::math::{V3, fmath};
+use crate::math::V3;
 use crate::prediction::{self, EngineModel, HorizonPolicy, MarkerKind};
 use crate::propagator::{Propagator, ScState};
 use crate::time::Epoch;
@@ -251,33 +251,38 @@ pub fn first_guess(
     match geometry(reg, parking.center, target)? {
         Geometry::Local => node_at(t_dep, a.dv_vec),
         Geometry::Interplanetary { .. } => {
+            // Departure hyperbola with periapsis at the burn point r: its plane contains r̂
+            // and the asymptote ŝ, the periapsis velocity is ⊥ r̂ in that plane with speed
+            // √(v∞² + 2μ/r), and the asymptote lies at ν∞ = acos(−1/e), e = 1 + r·v∞²/μ
+            // (Curtis eq. 8.43). Over one parking period, pick the point minimising the Δv
+            // vector to that velocity, penalising asymptote misalignment (|r̂·ŝ − cos ν∞|).
             let el = kepler::Elements::from_state(parking.r, parking.v, parking.mu);
             let period = el.period(parking.mu).unwrap_or(5_400.0);
-            let v_inf = a.dv_vec;
-            let vi = v_inf.norm();
-            let dir = v_inf.normalized().ok_or(TransferError::Lambert)?;
-            let mut best = (f64::NEG_INFINITY, t_dep);
-            for k in 0..360 {
-                let t = t_dep.add_seconds(-period * f64::from(k) / 360.0);
+            let vi = a.dv_vec.norm();
+            let s_hat = a.dv_vec.normalized().ok_or(TransferError::Lambert)?;
+            let mut best: Option<(f64, Epoch, V3)> = None;
+            for k in 0..720 {
+                let t = t_dep.add_seconds(-period * f64::from(k) / 720.0);
                 let Some((r, v)) = parking.at(t) else {
                     continue;
                 };
                 let rn = r.norm();
-                let e = 1.0 + rn * vi * vi / parking.mu;
-                let nu = fmath::acos(-1.0 / e);
-                let (pro, _, _) = orbit_frame(r, v).ok_or(TransferError::Lambert)?;
                 let rhat = r * (1.0 / rn);
-                let tang = (pro - rhat * pro.dot(rhat)).normalized().unwrap_or(pro);
-                let asym = rhat * fmath::cos(nu) + tang * fmath::sin(nu);
-                let d = asym.dot(dir);
-                if d > best.0 {
-                    best = (d, t);
+                let e = 1.0 + rn * vi * vi / parking.mu;
+                let cos_nu = -1.0 / e;
+                let c = rhat.dot(s_hat);
+                let Some(w) = (s_hat - rhat * c).normalized() else {
+                    continue;
+                };
+                let vp = f64::sqrt(vi * vi + 2.0 * parking.mu / rn);
+                let dv = w * vp - v;
+                let cost = dv.norm() + 3_000.0 * (c - cos_nu).abs();
+                if best.is_none_or(|b| cost < b.0) {
+                    best = Some((cost, t, dv));
                 }
             }
-            let t = best.1;
-            let (r, v) = parking.at(t).ok_or(TransferError::Lambert)?;
-            let dv = f64::sqrt(vi * vi + 2.0 * parking.mu / r.norm()) - v.norm();
-            Ok(ManeuverNode::new(t, dv, 0.0, 0.0))
+            let (_, t, dv) = best.ok_or(TransferError::Lambert)?;
+            node_at(t, dv)
         }
     }
 }
@@ -493,6 +498,7 @@ pub fn aim(
     let mut nodes = nodes.to_vec();
     let mut f = eval(&nodes)?;
     for _ in 0..30 {
+        eprintln!("DBG   |f| {:.0} km", norm(&f) / 1000.0);
         if norm(&f) < tol {
             break;
         }
@@ -622,8 +628,9 @@ pub fn plan(
     // patched-conic burn short, and close to the escape energy the arrival position is so
     // nonlinear in Δv that Gauss–Newton stalls. A 1-D secant on the prograde Δv first makes
     // the distance from the central body at the aim time right.
+    let local = matches!(geometry(reg, parking.center, target)?, Geometry::Local);
     let mut node = node;
-    if let Ok(tc) = eph.state_relative(target, parking.center, t_aim) {
+    if local && let Ok(tc) = eph.state_relative(target, parking.center, t_aim) {
         let want = (tc.r + point).norm();
         let dist = |n: &ManeuverNode| {
             relative_at(p, eph, s0, &[*n], engine, policy, target, t_aim)
@@ -656,7 +663,33 @@ pub fn plan(
     let hp = parking.r.cross(parking.v).normalized().unwrap_or(h);
     let e1 = (point - hp * point.dot(hp)).normalized().unwrap_or(side);
     let e2 = hp.cross(e1);
-    let (nodes, _) = aim(
+    // Local transfers aim in-plane (a normal burn barely moves the ~180°-later arrival);
+    // interplanetary departures aim in 3-D (a normal burn tilts the escape asymptote).
+    let ident = [
+        V3::new(1.0, 0.0, 0.0),
+        V3::new(0.0, 1.0, 0.0),
+        V3::new(0.0, 0.0, 1.0),
+    ];
+    let (axes, vars): (&[V3], &[Var]) = if local {
+        (&[e1, e2], &[Var::Prograde(0), Var::Radial(0), Var::Time(0)])
+    } else {
+        (
+            &ident,
+            &[
+                Var::Prograde(0),
+                Var::Normal(0),
+                Var::Radial(0),
+                Var::Time(0),
+            ],
+        )
+    };
+    eprintln!("DBG guess {:?} dv {:.0}", node, node.dv_magnitude());
+    eprintln!(
+        "DBG guess rel {:?}",
+        relative_at(p, eph, s0, &[node], engine, policy, target, t_aim)
+            .map(|r| (r - point).norm() / 1e3)
+    );
+    let (nodes, m1) = aim(
         p,
         eph,
         s0,
@@ -666,10 +699,11 @@ pub fn plan(
         target,
         t_aim,
         point,
-        &[e1, e2],
-        &[Var::Prograde(0), Var::Radial(0), Var::Time(0)],
+        axes,
+        vars,
         0.02 * b,
     )?;
+    eprintln!("DBG stage1 {:.0} km {:?}", m1 / 1e3, nodes[0]);
     // 2. Midcourse: full 3-D aim.
     let t_mcc = t_dep.add_seconds(0.35 * tof);
     let nodes = [nodes[0], ManeuverNode::new(t_mcc, 0.0, 0.0, 0.0)];

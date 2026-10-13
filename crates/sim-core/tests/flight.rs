@@ -588,3 +588,59 @@ fn an_impact_under_the_stage_limit_is_a_landing() {
         f.status()
     );
 }
+
+/// M10 save files: a mid-flight snapshot (after a burn and staging) survives a JSON round
+/// trip exactly, restores the same state, and a given save always replays the same future.
+#[test]
+fn save_and_restore_a_flight() {
+    let (e, reg) = (eph(), BodyRegistry::builtin());
+    let p = Propagator::new(&e, &reg);
+    let mut f = Flight::new(rs1(), &leo(), Quat::IDENTITY, &p).unwrap();
+    let burn = Controls {
+        throttle: 1.0,
+        sas: SasMode::Prograde,
+        ..Controls::default()
+    };
+    run(&mut f, &p, 30.0, &burn);
+    let coast = Controls {
+        sas: SasMode::Prograde,
+        ..Controls::default()
+    };
+    run(&mut f, &p, 30.0, &coast);
+    let snap = f.snapshot().unwrap();
+    let text = serde_json::to_string(&snap).unwrap();
+    let back: sim_core::flight::FlightSnapshot = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, snap, "JSON round trip must be exact");
+
+    let a = Flight::restore(rs1(), &back, &p).unwrap();
+    let t = f.epoch();
+    let (sa, sf) = (a.state_at(t).unwrap(), f.state_at(t).unwrap());
+    // The restored trajectory's interpolant at its own start reproduces the saved state to
+    // µm (dense-output evaluation), not to the last bit.
+    assert!((sa.state.r - sf.state.r).norm() < 1e-3);
+    assert!((sa.state.v - sf.state.v).norm() < 1e-6);
+    assert!(
+        (sa.mass - sf.mass).abs() < 1e-6,
+        "{} vs {}",
+        sa.mass,
+        sf.mass
+    );
+
+    // Two restores of the same save → bit-identical futures; close to the original run.
+    let mut a = a;
+    let mut b = Flight::restore(rs1(), &back, &p).unwrap();
+    run(&mut a, &p, 120.0, &burn);
+    run(&mut b, &p, 120.0, &burn);
+    run(&mut f, &p, 120.0, &burn);
+    let t = a.epoch();
+    let (ra, rb, rf) = (
+        a.state_at(t).unwrap(),
+        b.state_at(t).unwrap(),
+        f.state_at(t).unwrap(),
+    );
+    assert_eq!(ra.state.r, rb.state.r);
+    assert_eq!(ra.state.v, rb.state.v);
+    let dr = (ra.state.r - rf.state.r).norm();
+    eprintln!("restored vs uninterrupted after 120 s of burn: {dr:.3e} m");
+    assert!(dr < 1.0, "{dr}");
+}

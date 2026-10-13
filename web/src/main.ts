@@ -4,7 +4,10 @@ import { loadCore, type BodyRow } from "./core";
 import { SettingsStore, type DepthMode } from "./settings";
 import { SATURN_TEST, SCENARIOS, Simulation, type Scenario } from "./sim/simulation";
 import { Engine } from "./render/engine";
-import { CAMERA_MODE_NAMES, FOCUS_SPACECRAFT, World, type WorldAssets } from "./render/world";
+import { CAMERA_MODE_NAMES, FOCUS_SPACECRAFT, World, type CameraMode, type WorldAssets } from "./render/world";
+import { listSaves, storeSave, type SaveGame } from "./sim/saves";
+import { FlightRecorder } from "./sim/recorder";
+import { ReplayPlayer } from "./ui/replay";
 import { loadStars } from "./render/sky";
 import { Menus } from "./ui/menus";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -251,6 +254,8 @@ async function main(): Promise<void> {
   const core = await loadCore();
   const bodies: BodyRow[] = core.bodies;
   const sim = new Simulation();
+  const recorder = new FlightRecorder();
+  const replay = new ReplayPlayer(sim, recorder);
   const scenario: Scenario = testScene === "saturn-jitter" ? SATURN_TEST : SCENARIOS[0]!;
   await sim.loadEphemeris(scenario.epochUtc, (m) => (status.textContent = m));
   const assets = await loadAssets(settings.graphics.textureQuality, (m) => (status.textContent = m));
@@ -319,6 +324,8 @@ async function main(): Promise<void> {
   const menus: Menus = new Menus(
     {
       async startMission(s) {
+        if (replay.active) replay.exit();
+        recorder.clear();
         sim.start(s, store.get().sim);
         await useVehicle(s);
         hud.setVehicle(s.vehicle?.def ?? null);
@@ -343,7 +350,52 @@ async function main(): Promise<void> {
         menus.hide();
         hud.show(true);
       },
+      saveGame(name) {
+        const body = sim.sim.saveState();
+        if (!body || !sim.scenario) return "Nothing to save (no flight in progress, or it has ended).";
+        const save: SaveGame = {
+          version: 1,
+          id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+          name,
+          created: new Date().toISOString(),
+          missionId: sim.scenario.id,
+          utc: sim.sim.utcIso(),
+          sim: body,
+          controls: { ...sim.controls },
+          warpIndex: sim.warpIndex,
+          cameraMode: world.cameraMode,
+          targetId: sim.targetId,
+          recording: recorder.export(),
+        };
+        const r = storeSave(save);
+        return r.ok ? null : `Could not store the save: ${r.error}`;
+      },
+      async loadGame(save) {
+        const sc = SCENARIOS.find((m) => m.id === save.missionId);
+        if (!sc) return `unknown mission “${save.missionId}”`;
+        await menus.actions.startMission(sc);
+        try {
+          sim.sim.loadState(save.sim);
+        } catch (e) {
+          menus.actions.toMainMenu();
+          return String(e);
+        }
+        sim.controls = { ...save.controls };
+        sim.warpIndex = 0;
+        if (save.targetId >= 0) sim.setTarget(save.targetId);
+        world.setCameraMode(save.cameraMode as CameraMode);
+        recorder.import(save.recording ?? []);
+        sim.notice = { text: `Loaded “${save.name}”`, until: performance.now() + 2500 };
+        return null;
+      },
+      replay() {
+        if (!replay.start()) return false;
+        menus.hide();
+        hud.show(true);
+        return true;
+      },
       toMainMenu() {
+        if (replay.active) replay.exit();
         inGame = false;
         input.enabled = false;
         mapView.setActive(false);
@@ -360,7 +412,7 @@ async function main(): Promise<void> {
   const mapView = new MapView(engine, world, sim, bodies);
   const planner = new TransferPlanner(sim, bodies);
   mapView.onActiveChange = (on) => planner.setActive(on && sim.hasVehicle);
-  ui.append(mapView.overlay, mapView.panel, mapView.track, planner.root, menus.root, hud.root, attribution.root);
+  ui.append(mapView.overlay, mapView.panel, mapView.track, planner.root, replay.root, menus.root, hud.root, attribution.root);
   const syncCamera = (s: ReturnType<typeof store.get>) => {
     world.camera.invertX = s.controls.invertCameraX;
     world.camera.invertY = s.controls.invertCameraY;
@@ -412,6 +464,19 @@ async function main(): Promise<void> {
       case "[": world.cycleFocus(-1); break;
       case "m": case "M": if (sim.hasVehicle) mapView.setActive(!mapView.active), hud.setMap(mapView.active); break;
       case "g": case "G": mapView.toggleTrack(); break;
+      case "F5": {
+        e.preventDefault();
+        const err = menus.actions.saveGame("Quicksave");
+        sim.notice = { text: err ?? "Quicksaved", until: performance.now() + 2000 };
+        break;
+      }
+      case "F9": {
+        e.preventDefault();
+        const q = listSaves().find((x) => x.name === "Quicksave");
+        if (q) void menus.actions.loadGame(q);
+        else sim.notice = { text: "No quicksave yet (F5)", until: performance.now() + 2000 };
+        break;
+      }
       case "c": case "C": {
         if (mapView.active || world.focus !== FOCUS_SPACECRAFT) break;
         const m = world.cycleCameraMode();
@@ -463,8 +528,11 @@ async function main(): Promise<void> {
       if (yaw || pitch || zoom !== 1) world.camera.nudge(yaw, pitch, zoom);
     }
     hud.stageProgress = input.stageProgress;
-    if (inGame || testScene) sim.tick(dt);
-    else world.camera.spin(dt * 0.02);
+    if (replay.active) replay.update(dt);
+    else if (inGame || testScene) {
+      sim.tick(dt);
+      if (inGame && sim.hasVehicle) recorder.sample(sim);
+    } else world.camera.spin(dt * 0.02);
     world.update(dt);
     if (world.cameraMode === "cockpit") world.setCabinData(hud.cabinData());
     mapView.keysFine = sim.controls.fine;

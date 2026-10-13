@@ -287,3 +287,96 @@ fn lunar_plan_from_an_inclined_parking_orbit() {
     );
     assert!(miss.abs() < 20e3);
 }
+
+#[test]
+fn mars_plan_nbody() {
+    use sim_core::prediction::EngineModel;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/public/ephemeris/ephem-2020.rseph"
+    );
+    let Ok(bytes) = std::fs::read(path) else {
+        eprintln!("skipped: {path} not present");
+        return;
+    };
+    let mut e = Ephemeris::new();
+    e.load(&bytes).unwrap();
+    let reg = BodyRegistry::builtin();
+    let r = 6_378_137.0 + 400e3;
+    let el = sim_core::kepler::Elements {
+        p: r,
+        a: r,
+        e: 0.0,
+        i: 28.5f64.to_radians(),
+        raan: 200f64.to_radians(),
+        argp: 0.0,
+        nu: 0.0,
+    };
+    let (rv, vv) = el.to_state(gm::EARTH);
+    let park = Parking {
+        center: BodyId::EARTH,
+        epoch: t0(),
+        r: rv,
+        v: vv,
+        mu: gm::EARTH,
+    };
+    let pc = transfer::porkchop(
+        &e,
+        &reg,
+        &park,
+        BodyId::MARS,
+        t0().add_seconds(3600.0),
+        t0().add_seconds(120.0 * 86_400.0),
+        40,
+        150.0 * 86_400.0,
+        330.0 * 86_400.0,
+        19,
+    );
+    let (k, dv) = pc
+        .dv
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.is_finite())
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap();
+    let s0 = ScState {
+        epoch: t0(),
+        state: State::new(
+            rv,
+            vv,
+            IcrfBody {
+                center: BodyId::EARTH,
+            },
+        ),
+        mass: 49_360.0,
+    };
+    let p = Propagator::new(&e, &reg);
+    let eng = Some(EngineModel {
+        thrust: 101_800.0,
+        isp: 449.7,
+    });
+    let mut pol = HorizonPolicy::default();
+    pol.cap = pc.tof[k % 19] * 1.3;
+    let t = std::time::Instant::now();
+    let res = transfer::plan(
+        &p,
+        &e,
+        &reg,
+        &s0,
+        &park,
+        eng,
+        &pol,
+        BodyId::MARS,
+        Epoch::from_tdb_seconds(pc.dep[k / 19]),
+        pc.tof[k % 19],
+        3_389_500.0 + 300e3,
+    );
+    eprintln!(
+        "mars: best {dv:.0} m/s; plan {:?} in {:.1} s",
+        res.as_ref()
+            .map(|(n, m)| (n[0].dv_magnitude(), n[1].dv_magnitude(), m / 1000.0)),
+        t.elapsed().as_secs_f64()
+    );
+    let (_, miss) = res.unwrap();
+    assert!(miss.abs() < 50e3);
+}

@@ -115,6 +115,10 @@ pub struct Sim {
     policy: HorizonPolicy,
     plan: MissionPlan,
     plan_pred: Option<Prediction>,
+    /// Replay view (M10): while set, the view queries (spacecraft, relativeState,
+    /// bodyFrame, attitude, sunVisibility) answer at this past epoch with this recorded
+    /// spacecraft state. The flight itself is untouched.
+    view: Option<ReplayView>,
     plan_dirty: bool,
     /// The burn being executed by the autopilot and the plan it came from.
     execution: Option<Execution>,
@@ -154,6 +158,7 @@ impl Sim {
                 legs: vec![Leg::default()],
             },
             plan_pred: None,
+            view: None,
             plan_dirty: false,
             execution: None,
             terrain: sim_core::terrain::Terrain::default(),
@@ -319,6 +324,18 @@ impl Sim {
     /// Spacecraft at the current epoch: [center, x, y, z, vx, vy, vz, mass] (ICRF, m,
     /// m/s, kg), or an empty array if there is none.
     pub fn spacecraft(&self) -> Vec<f64> {
+        if let Some(v) = &self.view {
+            return vec![
+                f64::from(v.center.0),
+                v.r.x,
+                v.r.y,
+                v.r.z,
+                v.v.x,
+                v.v.y,
+                v.v.z,
+                0.0,
+            ];
+        }
         let Some(s) = self.current_state() else {
             return Vec::new();
         };
@@ -416,7 +433,7 @@ impl Sim {
     pub fn relative_state(&self, target: i32, center: i32) -> Result<Vec<f64>, JsError> {
         let s = self
             .eph
-            .state_relative(BodyId(target), BodyId(center), self.epoch)
+            .state_relative(BodyId(target), BodyId(center), self.view_epoch())
             .map_err(js_err)?;
         Ok(vec![s.r.x, s.r.y, s.r.z, s.v.x, s.v.y, s.v.z])
     }
@@ -425,10 +442,11 @@ impl Sim {
     /// precise IERS model, other bodies from IAU WGCCRE. Empty if unknown.
     #[wasm_bindgen(js_name = bodyFrame)]
     pub fn body_frame(&self, body: i32) -> Vec<f64> {
+        let t = self.view_epoch();
         let o = if body == BodyId::EARTH.0 {
-            Some(earth::earth_orientation(self.epoch).0)
+            Some(earth::earth_orientation(t).0)
         } else {
-            orientation::iau_body_orientation(BodyId(body), self.epoch)
+            orientation::iau_body_orientation(BodyId(body), t)
         };
         o.map_or_else(Vec::new, |o| {
             o.icrf_to_bf
@@ -443,6 +461,9 @@ impl Sim {
     /// body and the Moon when near Earth).
     #[wasm_bindgen(js_name = sunVisibility)]
     pub fn sun_visibility(&self) -> f64 {
+        if self.view.is_some() {
+            return 1.0;
+        }
         let Some(s) = self.current_state() else {
             return 1.0;
         };
@@ -517,6 +538,10 @@ impl Sim {
     }
 
     /// The spacecraft's state now: the flight if there is one, else the M3 trajectory.
+    fn view_epoch(&self) -> Epoch {
+        self.view.as_ref().map_or(self.epoch, |v| v.t)
+    }
+
     /// The current orbit as a two-body parking orbit for transfer planning.
     fn parking(&self) -> Option<transfer::Parking> {
         let s = self.current_state()?;
@@ -852,6 +877,105 @@ impl Sim {
     }
 
     /// Target body (NAIF id), or a negative number for none.
+    /// Save file body (M10): the flight snapshot, the maneuver nodes and the prediction
+    /// policy, as JSON. The caller adds its own data (mission, controls, camera). Empty
+    /// when there is no flight or it has ended.
+    #[wasm_bindgen(js_name = saveState)]
+    pub fn save_state(&self) -> String {
+        let Some(snap) = self.flight.as_ref().and_then(|f| f.snapshot()) else {
+            return String::new();
+        };
+        let nodes: Vec<Value> = self
+            .plan
+            .nodes()
+            .into_iter()
+            .map(|(_, _, n)| json!([n.epoch_tdb, n.prograde, n.normal, n.radial]))
+            .collect();
+        json!({ "version": 1, "flight": snap, "nodes": nodes, "policy": [self.policy.orbits, self.policy.cap, self.policy.min] }).to_string()
+    }
+
+    /// Restore a `saveState` body into the loaded vehicle (load the same vehicle first).
+    #[wasm_bindgen(js_name = loadState)]
+    pub fn load_state(&mut self, text: &str) -> Result<(), JsError> {
+        let v: Value = serde_json::from_str(text).map_err(js_err)?;
+        let snap: flight::FlightSnapshot =
+            serde_json::from_value(v["flight"].clone()).map_err(js_err)?;
+        let cfg = self
+            .vehicle
+            .clone()
+            .ok_or_else(|| JsError::new("no vehicle loaded"))?;
+        let f = Flight::restore(cfg, &snap, &self.propagator()).map_err(js_err)?;
+        self.epoch = Epoch::from_tdb_seconds(snap.epoch_tdb);
+        self.flight = Some(f);
+        self.traj = None;
+        self.debris.clear();
+        if let Some(p) = v["policy"].as_array() {
+            let g = |i: usize, d: f64| p.get(i).and_then(Value::as_f64).unwrap_or(d);
+            self.policy = HorizonPolicy {
+                orbits: g(0, 1.05),
+                cap: g(1, 30.0 * 86_400.0),
+                min: g(2, 600.0),
+            };
+        }
+        self.plan.legs[0].nodes = v["nodes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|n| {
+                        let g = |i: usize| n.get(i).and_then(Value::as_f64);
+                        Some(ManeuverNode {
+                            epoch_tdb: g(0)?,
+                            prograde: g(1)?,
+                            normal: g(2)?,
+                            radial: g(3)?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.plan_dirty = true;
+        self.rebuild_plan();
+        self.update_prediction();
+        Ok(())
+    }
+
+    /// Enter (or move) the replay view: a recorded spacecraft state at epoch `t` (TDB s).
+    #[wasm_bindgen(js_name = setReplayView)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_replay_view(
+        &mut self,
+        t: f64,
+        center: i32,
+        rx: f64,
+        ry: f64,
+        rz: f64,
+        vx: f64,
+        vy: f64,
+        vz: f64,
+        qw: f64,
+        qx: f64,
+        qy: f64,
+        qz: f64,
+    ) {
+        self.view = Some(ReplayView {
+            t: Epoch::from_tdb_seconds(t),
+            center: BodyId(center),
+            r: V3::new(rx, ry, rz),
+            v: V3::new(vx, vy, vz),
+            q: Quat {
+                w: qw,
+                x: qx,
+                y: qy,
+                z: qz,
+            },
+        });
+    }
+
+    #[wasm_bindgen(js_name = clearReplayView)]
+    pub fn clear_replay_view(&mut self) {
+        self.view = None;
+    }
+
     /// Porkchop grid for a transfer from the current orbit to `target` (M9).
     /// Returns [n_dep, n_tof, dep epochs (TDB s)…, tofs (s)…, Δv (m/s)…, arrival v∞…]
     /// (row-major by departure; NaN where Lambert fails). Empty without a flight.
@@ -955,6 +1079,9 @@ impl Sim {
 
     /// Attitude now (body → ICRF): [w, x, y, z]; empty without a flight.
     pub fn attitude(&self) -> Vec<f64> {
+        if let Some(v) = &self.view {
+            return vec![v.q.w, v.q.x, v.q.y, v.q.z];
+        }
         self.flight.as_ref().map_or_else(Vec::new, |f| {
             let q = f.attitude_at(self.epoch);
             vec![q.w, q.x, q.y, q.z]
@@ -1154,6 +1281,16 @@ impl Sim {
         .map(|&r| self.reference_velocity_with(&s, r).norm())
         .collect()
     }
+}
+
+/// The replay view's recorded spacecraft state.
+#[derive(Clone, Copy)]
+struct ReplayView {
+    t: Epoch,
+    center: BodyId,
+    r: V3,
+    v: V3,
+    q: Quat,
 }
 
 /// A burn handed to the autopilot, kept for the planned-vs-actual report.
