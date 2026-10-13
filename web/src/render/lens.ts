@@ -37,15 +37,23 @@ const STRAIGHT_EDGE = 0.25;
 /** The solar disk's clamp in SunView (fp16 headroom): measured visibility compares to it. */
 export const SUN_DISK_CLAMP = 6e4;
 
+/** Point-source transmittance at 10° off-axis (hooded lens; assumed, see veilQuad). */
+const VEIL_PST_10 = 1e-3;
+/** Beyond this field angle the hood blocks the Sun from the front element. */
+const VEIL_MAX = (80 * Math.PI) / 180;
+
 export class LensEffects {
   private table: GhostTable | null = null;
   private visRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
   private visQuad: FullScreenQuad;
   private spikeQuad: FullScreenQuad;
+  private veilQuad: FullScreenQuad;
   private ghostMesh: THREE.Mesh | null = null;
   private ghostScene = new THREE.Scene();
   private ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private pupilArea = 102;
+  /** Veiling-glare radiance (U) from an off-frame Sun, set by render(). */
+  veilLevel = 0;
   /** Artistic scale on top of the physical ghost radiance (1 = physical). */
   ghostScale = 1;
 
@@ -146,6 +154,27 @@ export class LensEffects {
         depthWrite: false,
       }),
     );
+
+    // Veiling glare from a Sun outside the frame: light scattered by the barrel, the
+    // mounts and the element surfaces reaches the whole image. Modelled as a uniform
+    // equivalent radiance L = E·PST(θ)/π, with the point-source transmittance of a hooded
+    // camera lens falling as θ⁻²: PST ≈ VEIL_PST_10·(10°/θ)² (order of magnitude of
+    // measured PST curves; Breault, "Control of stray light", Handbook of Optics vol. I,
+    // ch. 38). In U (= E☉/π) that is E[E☉]·PST. It also keeps auto-exposure from
+    // dark-adapting with the Sun just off-frame (no stars next to the Sun).
+    this.veilQuad = new FullScreenQuad(
+      new THREE.ShaderMaterial({
+        uniforms: { level: { value: 0 }, preExposure: PRE_EXPOSURE },
+        vertexShader: QUAD_VS,
+        fragmentShader: /* glsl */ `
+          uniform float level, preExposure;
+          void main() { gl_FragColor = vec4(vec3(level * preExposure), 1.0); }`,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
   }
 
   private buildGhostMesh(): void {
@@ -217,6 +246,15 @@ export class LensEffects {
     this.ghostScene.add(this.ghostMesh);
   }
 
+  /** Add the veil (after metering: the meter is for the scene, the veil only limits the
+   *  exposure, see Engine). */
+  renderVeil(r: THREE.WebGLRenderer, hdr: THREE.WebGLRenderTarget): void {
+    if (this.veilLevel <= 0) return;
+    (this.veilQuad.material as THREE.ShaderMaterial).uniforms.level!.value = this.veilLevel;
+    r.setRenderTarget(hdr);
+    this.veilQuad.render(r);
+  }
+
   /** Interpolate the ghost table at field angle θ (rad). */
   private updateGhosts(theta: number): void {
     const t = this.table!;
@@ -238,6 +276,7 @@ export class LensEffects {
 
   /** Measure the Sun's visibility in `hdr` and add spikes and ghosts into it. */
   render(r: THREE.WebGLRenderer, hdr: THREE.WebGLRenderTarget, camera: THREE.PerspectiveCamera, sun: SunState | null, spikes: boolean): void {
+    this.veilLevel = 0;
     if (!sun || sun.irradiance <= 0) return;
     const theta = Math.acos(Math.max(-1, Math.min(1, -sun.dirView.z)));
     const maxTheta = (THETA_MAX_DEG * Math.PI) / 180;
@@ -246,7 +285,7 @@ export class LensEffects {
     const tanH = tanV * camera.aspect;
     const sx = sun.dirView.x / -sun.dirView.z, sy = sun.dirView.y / -sun.dirView.z;
     const onScreen = sun.dirView.z < 0 && Math.abs(sx) < tanH && Math.abs(sy) < tanV;
-    if (!onScreen && theta > maxTheta) return;
+    if (!onScreen && theta > Math.max(maxTheta, VEIL_MAX)) return;
 
     const vu = (this.visQuad.material as THREE.ShaderMaterial).uniforms;
     vu.src!.value = hdr.texture;
@@ -264,6 +303,10 @@ export class LensEffects {
     this.visQuad.render(r);
 
     r.setRenderTarget(hdr);
+    if (!onScreen && theta < VEIL_MAX) {
+      const t = Math.max(theta, (10 * Math.PI) / 180);
+      this.veilLevel = sun.irradiance * sun.visibleCpu * VEIL_PST_10 * ((10 * Math.PI) / 180 / t) ** 2;
+    }
     if (spikes && onScreen) {
       const su = (this.spikeQuad.material as THREE.ShaderMaterial).uniforms;
       su.sunDir!.value.copy(sun.dirView);

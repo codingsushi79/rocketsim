@@ -56,7 +56,14 @@ const COMMON_VS = /* glsl */ `
 /** Night-lights radiance per unit (linear) Black Marble texture value, in U. Rough
  *  calibration: VIIRS DNB city radiances are ~1e-8–1e-7 W cm⁻² sr⁻¹ against ~1e-2 for
  *  sunlit land, i.e. ~1e-6 of daylight. */
-const NIGHT_LIGHTS_U = 2e-6;
+export const NIGHT_LIGHTS_U = 2e-6;
+
+/** GLSL: city lights from a linear Black Marble texel. The composite has a dim blue
+ *  base layer (ocean ≈ sRGB (5,5,15), deserts ≈ (37,34,63)) that is artwork, not light
+ *  (real night-side airglow is ~4e-9 U, far below it), so it is subtracted first. */
+export const NIGHT_LIGHTS_GLSL = /* glsl */ `
+  vec3 cityLights(vec3 t) { return max(t - vec3(0.022, 0.020, 0.055), vec3(0.0)); }
+`;
 
 /** Ocean surface roughness for the glint: GGX α ≈ the RMS slope of Cox & Munk (1954)
  *  for ~5 m/s wind, σ² ≈ 0.003 + 5.12e-3·U ≈ 0.029 → α ≈ 0.17. */
@@ -116,6 +123,7 @@ export class EarthView {
         uniform sampler2D dayMap, nightMap, waterMap, cloudMap;
         uniform vec3 sunDir;
         uniform float sunE, nightScale, preExposure, cloudShadows;
+        ${NIGHT_LIGHTS_GLSL}
         varying vec2 vUv;
         varying vec3 vNormalW;
         varying vec3 vViewW;
@@ -146,7 +154,7 @@ export class EarthView {
             float spec = D * F * G / (4.0 * ndl * ndv);
             day += vec3(PI * spec * sunE * ndl) * water * shadow;
           }
-          vec3 lights = texture2D(nightMap, vUv).rgb * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
+          vec3 lights = cityLights(texture2D(nightMap, vUv).rgb) * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
           gl_FragColor = vec4((day + lights) * preExposure, 1.0);
         }`,
     });

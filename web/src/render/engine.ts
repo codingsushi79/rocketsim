@@ -138,6 +138,7 @@ export class Engine {
           minExp: { value: EXPOSURE_MIN },
           sunE: { value: 0 },
           adaptL: { value: -1 },
+          veilL: { value: 0 },
           maxExp: { value: EXPOSURE_MAX },
           lod: { value: Math.log2(LUM_SIZE) },
           preExposure: PRE_EXPOSURE,
@@ -145,7 +146,7 @@ export class Engine {
         vertexShader: QUAD_VS,
         fragmentShader: /* glsl */ `
           uniform sampler2D lum, prev;
-          uniform float rate, first, minExp, maxExp, lod, preExposure, sunE, adaptL;
+          uniform float rate, first, minExp, maxExp, lod, preExposure, sunE, adaptL, veilL;
           varying vec2 vUv;
           void main() {
             // The luminance buffer is pre-exposed: divide by preExposure for true U.
@@ -164,6 +165,10 @@ export class Engine {
             // real photographs, instead of being metered up to mid-grey. Applies when the
             // lit pixels are sunlit (mean above 0.3 % of E), not to city lights at night.
             if (sunE > 0.0 && m.g > 0.01 && mean > 0.003 * sunE) ex = min(ex, 1.0 / sunE);
+            // Veiling glare from an off-frame Sun (lens.ts) is metered out, but it limits
+            // the exposure: the veil may read at most ~1 % of white (a faint haze), so the
+            // camera cannot dark-adapt to stars with the Sun just outside the frame.
+            if (veilL > 0.0) ex = min(ex, 0.01 / veilL);
             if (adaptL > 0.0) ex = clamp(0.18 / adaptL, minExp, maxExp);
             float target = log2(ex);
             float p = texture2D(prev, vec2(0.5)).r;
@@ -311,10 +316,13 @@ export class Engine {
     au.first!.value = this.firstFrame ? 1 : 0;
     au.sunE!.value = this.sun?.irradiance ?? 0;
     au.adaptL!.value = this.adaptLuminance ?? -1;
+    au.veilL!.value = this.settings.bloom ? this.lens.veilLevel : 0;
     r.setRenderTarget(next);
     this.adaptQuad.render(r);
     this.adaptIndex = 1 - this.adaptIndex;
     this.firstFrame = false;
+
+    if (this.settings.bloom) this.lens.renderVeil(r, this.composited);
 
     // 4. Exposure, bloom, tone mapping.
     const eu = (this.exposeQuad.material as THREE.ShaderMaterial).uniforms;

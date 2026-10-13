@@ -544,8 +544,21 @@ export class World {
       const d = toC.length();
       const alpha = vec(sunRel).angleTo(vec(rsc)); // Sun–center–spacecraft angle
       const bond = center === EARTH ? 0.306 : 0.12;
-      // Earthshine approximation: Lambert-sphere phase × (R/r)² × Bond albedo.
-      this.earthshine.intensity = Math.PI * eSun * bond * Math.min(1, (cRow.radii[0] / d) ** 2) * lambertPhase(alpha) * PRE_EXPOSURE.value;
+      // Planetshine: irradiance from the visible cap of the body, π·L·sin²θc with
+      // sin θc = R/d, times the Bond albedo and how much of that cap is sunlit.
+      // Far away the cap is the whole disk: the Lambert-sphere phase law. Close in (LEO sees
+      // a cap of half-angle θc ≈ 20°) it is the local illumination: the cap's sunlit
+      // fraction × the solar elevation below the spacecraft. Without this, the night side
+      // looked lit (the far-field law sees a crescent the spacecraft cannot).
+      const R = cRow.radii[0];
+      const thc = Math.acos(Math.min(1, R / d));
+      // The solar zenith angle below the spacecraft is the Sun–centre–spacecraft angle.
+      const zeta = alpha;
+      const lit = Math.max(0, Math.min(1, (Math.PI / 2 + thc - zeta) / (2 * Math.max(thc, 1e-3))));
+      const local = lit * Math.max(Math.cos(Math.min(zeta, Math.PI / 2)), 0.5 * lit * Math.sin(thc));
+      const w = Math.max(0, Math.min(1, (d / R - 1.5) / 1.5));
+      const g = w * lambertPhase(alpha) + (1 - w) * local;
+      this.earthshine.intensity = Math.PI * eSun * bond * Math.min(1, (R / d) ** 2) * g * PRE_EXPOSURE.value;
       // No shadow map for earthshine: inside the cabin it would shine through the walls.
       if (this.cockpitActive) this.earthshine.intensity = 0;
       this.earthshine.position.copy(this.spacecraft.position).add(toC.normalize());

@@ -15,6 +15,7 @@
 //   Above that the renderer isn't updated at all, so no requests are made.
 // - **No geometry is read back.** Physics never touches the tiles (D7).
 
+import { NIGHT_LIGHTS_GLSL, NIGHT_LIGHTS_U } from "./bodies";
 import * as THREE from "three";
 import { TilesRenderer } from "3d-tiles-renderer";
 import { CesiumIonAuthPlugin, CesiumIonOverlay, GoogleCloudAuthPlugin, ImageOverlayPlugin } from "3d-tiles-renderer/plugins";
@@ -116,7 +117,17 @@ export class EarthTiles {
     sunE: { value: 1 },
     opacity: { value: 1 },
     oceanCut: { value: 0 },
+    // Night lights (the globe's Black Marble, which the tiles would otherwise hide).
+    nightMap: { value: null as THREE.Texture | null },
+    nightScale: { value: NIGHT_LIGHTS_U },
+    worldToEcef: { value: new THREE.Matrix4() },
+    sunEcef: { value: new THREE.Vector3(1, 0, 0) },
   };
+
+  /** City lights on the tiles' night side: the same Black Marble map as the globe. */
+  setNightLights(t: THREE.Texture): void {
+    this.shared.nightMap.value = t;
+  }
   private materials = new Set<THREE.ShaderMaterial>();
   /** Current blend weight (0 = hidden, no requests). */
   alpha = 0;
@@ -190,12 +201,31 @@ export class EarthTiles {
       // texels after the overlay is applied. (Classification by colour, not height: ion
       // terrain is ellipsoidal, so the sea surface sits at the geoid, ±100 m.)
       const prev = m.onBeforeCompile;
-      const oceanCut = this.shared.oceanCut;
+      const sh0 = this.shared;
       m.onBeforeCompile = (sh, r) => {
         prev.call(m, sh, r);
-        sh.uniforms.oceanCut = oceanCut;
+        sh.uniforms.oceanCut = sh0.oceanCut;
+        sh.uniforms.nightMap = sh0.nightMap;
+        sh.uniforms.nightScale = sh0.nightScale;
+        sh.uniforms.worldToEcef = sh0.worldToEcef;
+        sh.uniforms.sunEcef = sh0.sunEcef;
+        sh.uniforms.nightPre = PRE_EXPOSURE;
+        sh.vertexShader = sh.vertexShader
+          .replace("#include <common>", "#include <common>\nuniform mat4 worldToEcef;\nvarying vec3 vEcef;")
+          .replace("#include <project_vertex>", "#include <project_vertex>\nvEcef = (worldToEcef * modelMatrix * vec4(transformed, 1.0)).xyz;");
         sh.fragmentShader = sh.fragmentShader
-          .replace("#include <common>", "#include <common>\nuniform float oceanCut;")
+          .replace("#include <common>", "#include <common>\nuniform float oceanCut, nightScale, nightPre;\nuniform sampler2D nightMap;\nuniform vec3 sunEcef;\nvarying vec3 vEcef;\n" + NIGHT_LIGHTS_GLSL)
+          .replace(
+            "#include <emissivemap_fragment>",
+            `#include <emissivemap_fragment>
+            {
+              // City lights below the local terminator (as on the globe, bodies.ts).
+              vec3 en = normalize(vEcef);
+              vec2 nuv = vec2(atan(en.y, en.x) / 6.2831853 + 0.5, asin(clamp(en.z, -1.0, 1.0)) / 3.1415927 + 0.5);
+              float sd = dot(en, sunEcef);
+              totalEmissiveRadiance += cityLights(texture2D(nightMap, nuv).rgb) * nightScale * (1.0 - smoothstep(-0.08, 0.06, sd)) * nightPre;
+            }`,
+          )
           .replace(
             "#include <alphamap_fragment>",
             `#include <alphamap_fragment>
@@ -268,6 +298,10 @@ export class EarthTiles {
     );
     this.anchor.updateMatrixWorld(true);
     this.shared.earthCenter.value.copy(earth);
+    this.shared.worldToEcef.value.copy(this.anchor.matrixWorld).invert();
+    this.shared.sunEcef.value
+      .set(R[0]! * sunDir.x + R[1]! * sunDir.y + R[2]! * sunDir.z, R[3]! * sunDir.x + R[4]! * sunDir.y + R[5]! * sunDir.z, R[6]! * sunDir.x + R[7]! * sunDir.y + R[8]! * sunDir.z)
+      .normalize();
     this.shared.sunDir.value.copy(sunDir);
     this.shared.sunE.value = sunE;
     this.shared.opacity.value = a;
