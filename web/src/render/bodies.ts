@@ -63,6 +63,62 @@ export const NIGHT_LIGHTS_U = 2e-6;
  *  (real night-side airglow is ~4e-9 U, far below it), so it is subtracted first. */
 export const NIGHT_LIGHTS_GLSL = /* glsl */ `
   vec3 cityLights(vec3 t) { return max(t - vec3(0.022, 0.020, 0.055), vec3(0.0)); }
+
+  // Sub-texel structure. The map's texel (≈ 5 km at 8192 px) averages a whole town; magnified,
+  // it is a blob. Within a lit texel, put the same radiance on lit streets: arterial grids
+  // (≈ 1.6 km, as the US mile-section roads that astronauts photograph), each district
+  // (≈ 12 km) with its own orientation and spacing, plus a share of diffuse glow. Lines are
+  // at least half a pixel wide (no aliasing) and the pattern has unit mean, so the texel's
+  // measured radiance is kept on average.
+  float nlHash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  float nlLines(float u, float L, float sigma) {
+    float d = abs(fract(u / L + 0.5) - 0.5) * L;
+    return exp(-d * d / (2.0 * sigma * sigma)) / (2.5066283 * sigma / L);
+  }
+  float nlField(vec2 x, float fp) {
+    vec2 dcell = floor(x / 12000.0);
+    float h = nlHash12(dcell), h2 = nlHash12(dcell + 31.0);
+    float ang = h * 1.5707963;
+    vec2 r = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * x;
+    // Streets wander a little (terrain, old towns).
+    r += 140.0 * vec2(sin(r.y / 2300.0 + 7.0 * h), sin(r.x / 1900.0 + 5.0 * h2));
+    float L = 1200.0 + 900.0 * h2;
+    float sigma = max(45.0, 0.35 * fp);
+    float grid = 0.5 * (nlLines(r.x, L, sigma) + nlLines(r.y, L, sigma));
+    // Brighter arterials now and then (commercial strips).
+    float strip = nlLines(r.x + 0.5 * L, 4.0 * L, sigma);
+    // Blocks of different density (parks, industry, dense housing): unit-mean weights.
+    float blk = 0.25 + 1.5 * nlHash12(floor(r / (2.0 * L)) + 3.0);
+    return blk * (0.12 + 0.68 * grid + 0.2 * strip);
+  }
+  // Lamp colour: high-pressure sodium (orange, ~2100 K) in most districts, white LED in some;
+  // same luminance either way.
+  vec3 nlTint(vec2 x) {
+    // Smooth value noise over ~12 km, so districts blend instead of ending in squares.
+    vec2 q = x / 12000.0, i = floor(q), f = q - i;
+    f = f * f * (3.0 - 2.0 * f);
+    float a = nlHash12(i + 71.0), b = nlHash12(i + vec2(1.0, 0.0) + 71.0);
+    float c0 = nlHash12(i + vec2(0.0, 1.0) + 71.0), d = nlHash12(i + vec2(1.0, 1.0) + 71.0);
+    float h = mix(mix(a, b, f.x), mix(c0, d, f.x), f.y);
+    vec3 sodium = vec3(1.0, 0.62, 0.30), led = vec3(0.92, 0.95, 1.0);
+    vec3 c = mix(sodium, led, smoothstep(0.55, 0.75, h));
+    return c / dot(c, vec3(0.2126, 0.7152, 0.0722));
+  }
+  // uv: equirectangular map coordinates; R: body radius (m); texelM: map texel size (m).
+  vec3 cityLightsAt(sampler2D map, vec2 uv, float R, float texelM) {
+    vec3 base = cityLights(texture2D(map, uv).rgb);
+    float lum = dot(base, vec3(0.3, 0.5, 0.2));
+    if (lum <= 0.0) return base;
+    float lat = (uv.y - 0.5) * 3.14159265, lon = (uv.x - 0.5) * 6.2831853;
+    vec2 x = vec2(lon * R * cos(lat), lat * R);
+    float fp = max(length(fwidth(x)), 1.0);
+    float w = smoothstep(1.5, 6.0, texelM / fp);
+    if (w <= 0.0) return base;
+    float detail = nlField(x, fp);
+    float lb = dot(base, vec3(0.2126, 0.7152, 0.0722));
+    vec3 tinted = lb * nlTint(x);
+    return mix(base, tinted * detail, w);
+  }
 `;
 
 /** Ocean surface roughness for the glint: GGX α ≈ the RMS slope of Cox & Munk (1954)
@@ -92,6 +148,7 @@ export class EarthView {
       uniforms: {
         dayMap: { value: day },
         nightMap: { value: night },
+        nightTexelM: { value: (2 * Math.PI * 6_371_000) / ((night.image as { width?: number } | undefined)?.width ?? 8192) },
         waterMap: { value: water },
         cloudMap: { value: clouds },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
@@ -124,7 +181,7 @@ export class EarthView {
         #include <logdepthbuf_pars_fragment>
         uniform sampler2D dayMap, nightMap, waterMap, cloudMap;
         uniform vec3 sunDir;
-        uniform float sunE, nightScale, preExposure, cloudShadows;
+        uniform float sunE, nightScale, preExposure, cloudShadows, nightTexelM;
         ${NIGHT_LIGHTS_GLSL}
         varying vec2 vUv;
         varying vec3 vNormalW;
@@ -164,7 +221,7 @@ export class EarthView {
           // the night side, with its glint on the sea, to a dark-adapted exposure.
           float ndm = dot(n, moonDir);
           day += (albedo * max(ndm, 0.0) + vec3(PI * glint(n, v, moonDir)) * water) * moonE * shadow;
-          vec3 lights = cityLights(texture2D(nightMap, vUv).rgb) * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
+          vec3 lights = cityLightsAt(nightMap, vUv, 6371000.0, nightTexelM) * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
           gl_FragColor = vec4((day + lights) * preExposure, 1.0);
         }`,
     });

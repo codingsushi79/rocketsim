@@ -122,6 +122,7 @@ export class EarthTiles {
     // The globe's water mask (1 = water), for the ocean cut.
     waterMap: { value: null as THREE.Texture | null },
     nightScale: { value: NIGHT_LIGHTS_U },
+    nightTexelM: { value: 4900 },
     worldToEcef: { value: new THREE.Matrix4() },
     sunEcef: { value: new THREE.Vector3(1, 0, 0) },
   };
@@ -129,6 +130,7 @@ export class EarthTiles {
   /** City lights on the tiles' night side: the same Black Marble map as the globe. */
   setNightLights(t: THREE.Texture): void {
     this.shared.nightMap.value = t;
+    this.shared.nightTexelM.value = (2 * Math.PI * 6_371_000) / ((t.image as { width?: number } | undefined)?.width ?? 8192);
   }
 
   /** The globe's water mask, so the ocean cut also catches tile seams and skirts. */
@@ -215,6 +217,7 @@ export class EarthTiles {
         sh.uniforms.nightMap = sh0.nightMap;
         sh.uniforms.waterMap = sh0.waterMap;
         sh.uniforms.nightScale = sh0.nightScale;
+        sh.uniforms.nightTexelM = sh0.nightTexelM;
         sh.uniforms.worldToEcef = sh0.worldToEcef;
         sh.uniforms.sunEcef = sh0.sunEcef;
         sh.uniforms.nightPre = PRE_EXPOSURE;
@@ -222,7 +225,7 @@ export class EarthTiles {
           .replace("#include <common>", "#include <common>\nuniform mat4 worldToEcef;\nvarying vec3 vEcef;")
           .replace("#include <project_vertex>", "#include <project_vertex>\nvEcef = (worldToEcef * modelMatrix * vec4(transformed, 1.0)).xyz;");
         sh.fragmentShader = sh.fragmentShader
-          .replace("#include <common>", "#include <common>\nuniform float oceanCut, nightScale, nightPre;\nuniform sampler2D nightMap, waterMap;\nuniform vec3 sunEcef;\nvarying vec3 vEcef;\n" + NIGHT_LIGHTS_GLSL)
+          .replace("#include <common>", "#include <common>\nuniform float oceanCut, nightScale, nightPre, nightTexelM;\nuniform sampler2D nightMap, waterMap;\nuniform vec3 sunEcef;\nvarying vec3 vEcef;\n" + NIGHT_LIGHTS_GLSL)
           .replace(
             "#include <emissivemap_fragment>",
             `#include <emissivemap_fragment>
@@ -231,7 +234,21 @@ export class EarthTiles {
               vec3 en = normalize(vEcef);
               vec2 nuv = vec2(atan(en.y, en.x) / 6.2831853 + 0.5, asin(clamp(en.z, -1.0, 1.0)) / 3.1415927 + 0.5);
               float sd = dot(en, sunEcef);
-              totalEmissiveRadiance += cityLights(texture2D(nightMap, nuv).rgb) * nightScale * (1.0 - smoothstep(-0.08, 0.06, sd)) * nightPre;
+              // Where the lights are within the night map's ~5 km texel: on the built-up area
+              // of the aerial imagery (streets and roofs are grey, bright and unsaturated;
+              // vegetation is green, water and fields dark or coloured). The weight has
+              // ≈ unit mean over a typical lit texel (URBAN_MEAN), so the texel's measured
+              // radiance is kept on average, and it fades in only where the night map is
+              // magnified.
+              vec3 dc = diffuseColor.rgb;
+              float mx = max(max(dc.r, dc.g), dc.b), mn = min(min(dc.r, dc.g), dc.b);
+              float sat = (mx - mn) / max(mx, 1e-4);
+              float urban = smoothstep(0.035, 0.16, dot(dc, vec3(0.2126, 0.7152, 0.0722))) * (1.0 - smoothstep(0.12, 0.45, sat)) * step(dc.g, 1.15 * max(dc.r, dc.b));
+              vec3 lights = cityLightsAt(nightMap, nuv, 6371000.0, nightTexelM);
+              float fpm = max(length(fwidth(vEcef)), 1.0);
+              float wU = smoothstep(1.5, 6.0, nightTexelM / fpm);
+              lights *= mix(1.0, 0.2 + 0.8 * urban / URBAN_MEAN, wU);
+              totalEmissiveRadiance += lights * nightScale * (1.0 - smoothstep(-0.08, 0.06, sd)) * nightPre;
             }`,
           )
           .replace(
@@ -253,7 +270,7 @@ export class EarthTiles {
       };
       const key = m.customProgramCacheKey.bind(m);
       m.customProgramCacheKey = () => key() + "|oceanCut";
-      m.defines = { ...(m.defines ?? {}), OCEAN_MAX_LUM: OCEAN_MAX_LUM.toFixed(4) };
+      m.defines = { ...(m.defines ?? {}), OCEAN_MAX_LUM: OCEAN_MAX_LUM.toFixed(4), URBAN_MEAN: "0.45" };
       m.needsUpdate = true;
       this.terrainMaterials.add(m);
     });
