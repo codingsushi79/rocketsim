@@ -283,13 +283,14 @@ const FS = /* glsl */ `
     float rc = length(o);
     if (rc > rIn) {
       // Above the base: stop where the ray enters the cloud-free core.
-      if (inner.x > 0.0) t1 = min(t1, inner.x);
+      if (inner.y > 0.0 && inner.x <= inner.y && inner.x > 0.0) t1 = min(t1, inner.x);
     } else if (inner.y > 0.0) {
       // Below the base: start where the ray leaves the core.
       t0 = max(t0, inner.y);
     }
     vec2 ground = hitSphere(o, dir, rGround);
-    if (ground.x > 0.0) t1 = min(t1, ground.x);
+    // hitSphere returns (1, −1) on a miss: only a real hit ends the ray at the ground.
+    if (ground.y > 0.0 && ground.x <= ground.y && ground.x > 0.0) t1 = min(t1, ground.x);
     // Terrain occludes the layer, but streamed terrain far away is coarse: a tile's flat
     // triangles can sit kilometres under the true surface, inside the layer (that cut
     // the march in tile-shaped patches). Allow the geometric error of the level of detail

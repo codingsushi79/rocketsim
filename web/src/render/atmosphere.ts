@@ -166,7 +166,7 @@ const MULTISCATTER_FS = /* glsl */ `
       float s = sqrt(max(1.0 - z * z, 0.0));
       vec3 dir = vec3(s * cos(phi), s * sin(phi), z);
       vec2 g = hitSphere(o, dir, rGround);
-      bool ground = g.x > 0.0;
+      bool ground = g.y > 0.0 && g.x <= g.y && g.x > 0.0; // (1, −1) is a miss
       float len = ground ? g.x : max(hitSphere(o, dir, rTop).y, 0.0);
       float ds = len / float(STEPS);
       vec3 tp = vec3(1.0);
@@ -237,19 +237,40 @@ const FS = /* glsl */ `
     float t0 = max(a.x, 0.0);
     float t1 = a.y;
     vec2 g = hitSphere(o, dir, rGround);
-    if (g.x > 0.0) t1 = min(t1, g.x);
+    // hitSphere returns (1, −1) on a miss: only a real hit ends the ray at the ground.
+    if (g.y > 0.0 && g.x <= g.y && g.x > 0.0) t1 = min(t1, g.x);
     t1 = min(t1, sceneDist);
     if (t1 <= t0) { gl_FragColor = scene; return; }
 
     int n = steps;
-    float ds = (t1 - t0) / float(n);
     float mu = dot(dir, sunDir);
     float pr = rayleighPhase(mu), pm = miePhase(mu);
     vec3 tView = vec3(1.0);
     vec3 inscatter = vec3(0.0);
-    for (int i = 0; i < 128; i++) {
+    // Samples concentrated toward the ray's lowest point (where the density is): split the
+    // ray there and space each half quadratically toward it. Uniform steps missed the few
+    // km around the tangent point of a limb ray from orbit (2000+ km long), and the dense
+    // near-ground layers of rays seen from space.
+    float tm = clamp(-dot(o, dir), t0, t1);
+    int nA = tm > t0 + 1.0 ? n / 2 : 0;
+    int nB = n - nA;
+    for (int i = 0; i < 256; i++) {
       if (i >= n) break;
-      vec3 p = o + dir * (t0 + ds * (float(i) + 0.5));
+      float ta, tb;
+      if (i < nA) {
+        // Toward tm from t0: u from 1 to 0 (t increasing).
+        float u0 = 1.0 - float(i) / float(nA), u1 = 1.0 - float(i + 1) / float(nA);
+        ta = tm - (tm - t0) * u0 * u0;
+        tb = tm - (tm - t0) * u1 * u1;
+      } else {
+        int k = i - nA;
+        float u0 = float(k) / float(nB), u1 = float(k + 1) / float(nB);
+        ta = tm + (t1 - tm) * u0 * u0;
+        tb = tm + (t1 - tm) * u1 * u1;
+      }
+      float ds = tb - ta;
+      if (ds <= 0.0) continue;
+      vec3 p = o + dir * (0.5 * (ta + tb));
       float rp = length(p);
       vec3 dens = atmoDensity(rp - rGround);
       vec3 sigT = atmoExtinction(dens);
