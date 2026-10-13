@@ -97,6 +97,8 @@ export class EarthView {
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         sunE: { value: 1 },
         nightScale: { value: NIGHT_LIGHTS_U },
+        moonDir: { value: new THREE.Vector3(0, 0, 1) },
+        moonE: { value: 0 },
         cloudShadows: { value: 1 },
         preExposure: PRE_EXPOSURE,
         /** Radius scale: pulled 2 km inward while 3D tiles cover the surface. */
@@ -129,6 +131,23 @@ export class EarthView {
         varying vec3 vViewW;
         const float ALPHA = ${OCEAN_ALPHA.toFixed(4)};
         const float F0 = ${WATER_F0.toFixed(4)};
+        uniform vec3 moonDir;
+        uniform float moonE;
+        // Specular glint: L = π·f·E·cosθ in U (units.ts), f = D·F·G/(4 n·l n·v); returns f·cosθ.
+        float glint(vec3 n, vec3 v, vec3 l) {
+          float ndl = dot(n, l);
+          if (ndl <= 0.0) return 0.0;
+          vec3 h = normalize(l + v);
+          float ndh = max(dot(n, h), 0.0);
+          float ndv = max(dot(n, v), 1e-4);
+          float a2 = ALPHA * ALPHA;
+          float dd = ndh * ndh * (a2 - 1.0) + 1.0;
+          float D = a2 / (PI * dd * dd);
+          float k = ALPHA * 0.5;
+          float G = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+          float F = F0 + (1.0 - F0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+          return D * F * G / (4.0 * ndl * ndv) * ndl;
+        }
         void main() {
           #include <logdepthbuf_fragment>
           vec3 n = normalize(vNormalW);
@@ -140,20 +159,11 @@ export class EarthView {
           float cov = smoothstep(0.12, 0.8, texture2D(cloudMap, vUv).r);
           float shadow = 1.0 - cloudShadows * 0.75 * cov;
           vec3 day = albedo * sunE * max(ndl, 0.0) * shadow;
-          // Specular glint: L = π·f·E·cosθ in U (units.ts), f = D·F·G/(4 n·l n·v).
-          if (water > 0.01 && ndl > 0.0) {
-            vec3 h = normalize(sunDir + v);
-            float ndh = max(dot(n, h), 0.0);
-            float ndv = max(dot(n, v), 1e-4);
-            float a2 = ALPHA * ALPHA;
-            float dd = ndh * ndh * (a2 - 1.0) + 1.0;
-            float D = a2 / (PI * dd * dd);
-            float k = ALPHA * 0.5;
-            float G = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
-            float F = F0 + (1.0 - F0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
-            float spec = D * F * G / (4.0 * ndl * ndv);
-            day += vec3(PI * spec * sunE * ndl) * water * shadow;
-          }
+          day += vec3(PI * glint(n, v, sunDir) * sunE) * water * shadow;
+          // Moonlight (moonlight.ts): ~2.5e-6 of sunlight at full moon, so it only shows on
+          // the night side, with its glint on the sea, to a dark-adapted exposure.
+          float ndm = dot(n, moonDir);
+          day += (albedo * max(ndm, 0.0) + vec3(PI * glint(n, v, moonDir)) * water) * moonE * shadow;
           vec3 lights = cityLights(texture2D(nightMap, vUv).rgb) * nightScale * (1.0 - smoothstep(-0.08, 0.06, ndl)) * (1.0 - 0.8 * cov);
           gl_FragColor = vec4((day + lights) * preExposure, 1.0);
         }`,
@@ -165,6 +175,12 @@ export class EarthView {
   setSun(dir: THREE.Vector3, irradiance: number): void {
     this.mat.uniforms.sunDir!.value.copy(dir);
     this.mat.uniforms.sunE!.value = irradiance;
+  }
+
+  /** Moonlight on the globe: direction to the Moon and its irradiance (E☉ units). */
+  setMoon(dir: THREE.Vector3, irradiance: number): void {
+    this.mat.uniforms.moonDir!.value.copy(dir);
+    this.mat.uniforms.moonE!.value = irradiance;
   }
 
   /** Shrink the globe below the 3D tiles (1 = full size). */

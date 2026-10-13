@@ -38,6 +38,9 @@ export interface AtmosphereParams {
   sunIrradiance: number;
   /** Render (ICRF) axes → body-fixed rotation, for surface-anchored layers (clouds). */
   toBodyFixed?: THREE.Matrix3;
+  /** Unit vector toward the Moon and its irradiance (E☉ units; moonlight.ts). */
+  moonDir?: THREE.Vector3;
+  moonIrradiance?: number;
 }
 
 export const TRANSMITTANCE_SIZE = [256, 64] as const;

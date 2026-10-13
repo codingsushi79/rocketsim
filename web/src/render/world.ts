@@ -1,6 +1,7 @@
 // Scene orchestration: reads the simulation state each frame (f64), builds the
 // floating-origin render space (camera at the origin), and feeds the engine.
 
+import { lunarIrradiance } from "./moonlight";
 import * as THREE from "three";
 import type { BodyRow } from "../core";
 import type { Settings } from "../settings";
@@ -32,6 +33,7 @@ export interface SurfaceDef {
 const AU = 149_597_870_700;
 const SUN = 10;
 const EARTH = 399;
+const MOON = 301;
 const SATURN = 699;
 /** Focus value meaning "the spacecraft". */
 export const FOCUS_SPACECRAFT = -1;
@@ -97,6 +99,8 @@ export class World {
   private debris: THREE.Object3D[] = [];
   private sunLight = new THREE.DirectionalLight(0xffffff, 1);
   private earthshine = new THREE.DirectionalLight(0x9fb4d9, 0);
+  /** Moonlight at the vehicle (no shadow map; its colour: the Moon's reddish reflectance). */
+  private moonLight = new THREE.DirectionalLight(0xfff0e0, 0);
   private stars: StarField;
   private milkyWay: MilkyWay;
   private planetPoints = new PlanetPoints(32);
@@ -159,7 +163,7 @@ export class World {
       this.bodies.set(row.id, { row, view, pos: new THREE.Vector3(), visible: true });
     }
     engine.scene.add(this.spacecraft);
-    engine.scene.add(this.sunLight, this.sunLight.target, this.earthshine, this.earthshine.target);
+    engine.scene.add(this.sunLight, this.sunLight.target, this.earthshine, this.earthshine.target, this.moonLight, this.moonLight.target);
     engine.renderer.shadowMap.enabled = true;
     engine.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.sunLight.castShadow = true;
@@ -565,6 +569,24 @@ export class World {
       this.earthshine.target.position.copy(this.spacecraft.position);
     }
 
+    // Moonlight at the vehicle, hidden when the centre body is in the way.
+    const mr = rel.get(MOON);
+    this.moonLight.intensity = 0;
+    if (mr && center !== MOON) {
+      const toM = sub(mr, rsc);
+      const dM = len(toM);
+      const alphaM = vec(sub(sunRel, mr)).angleTo(vec(sub(rsc, mr)));
+      const eMoon = lunarIrradiance(alphaM, dM, len(sub(sunRel, mr)) / AU);
+      const uM = vec(toM).normalize();
+      const Rc = this.bodies.get(center)?.row.radii[0] ?? 0;
+      // Ray rsc + t·uM against the centre body's sphere (at the origin).
+      const b = rsc[0] * uM.x + rsc[1] * uM.y + rsc[2] * uM.z;
+      const blocked = b < 0 && len(rsc) ** 2 - b * b < Rc * Rc;
+      if (!blocked && !this.cockpitActive) this.moonLight.intensity = Math.PI * eMoon * PRE_EXPOSURE.value;
+      this.moonLight.position.copy(this.spacecraft.position).add(uM);
+      this.moonLight.target.position.copy(this.spacecraft.position);
+    }
+
     // Camera at the origin looking at the focus.
     const c = this.engine.camera;
     c.position.set(0, 0, 0);
@@ -607,6 +629,14 @@ export class World {
         sunIrradiance: (AU / len(toS)) ** 2,
         toBodyFixed: this.earthFixed,
       };
+      const mr = rel.get(MOON);
+      if (mr) {
+        const toM = sub(mr, er);
+        const alphaM = vec(sub(sunRel, mr)).angleTo(vec(sub(er, mr)));
+        this.atmo.moonDir = vec(toM).normalize();
+        this.atmo.moonIrradiance = lunarIrradiance(alphaM, len(toM), len(sub(sunRel, mr)) / AU);
+        (earth.view as EarthView).setMoon(this.atmo.moonDir, this.atmo.moonIrradiance);
+      }
       if (this.tiles && this.earthFrameRows.length === 9) {
         const alt = earth.pos.length() - 6_371_000;
         this.tiles.update(earth.pos, this.earthFrameRows, alt, this.atmo.sunDir, this.atmo.sunIrradiance);

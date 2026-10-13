@@ -131,8 +131,8 @@ const FS = /* glsl */ `
   uniform mat3 toBodyFixed;
   uniform vec3 center;
   uniform float rGround, rTop;
-  uniform vec3 sunDir;
-  uniform float sunE;
+  uniform vec3 sunDir, moonDir;
+  uniform float sunE, moonE;
   uniform int steps;
   uniform int lightSteps;
   uniform float preExposure;
@@ -315,16 +315,35 @@ const FS = /* glsl */ `
       vec2 cs = cloudSample(q, fp, lod, true);
       float sigma = cs.x, tauCol = cs.y;
       if (sigma <= 0.0) continue;
-      // Light march toward the Sun through the cloud.
+      // The light: the Sun, or the Moon where sunlight is weaker (the night side; moonlight
+      // is ~2.5e-6 of sunlight, so where both matter the Sun dominates anyway). One light
+      // march either way.
+      float rq = length(q);
+      vec3 lDir = sunDir;
+      float lE = sunE, lmu = mu;
+      vec3 tAtm = transmittanceToTop(rq, dot(q, sunDir) / rq);
+      if (moonE > 0.0 && sunE * tAtm.g < moonE) {
+        lDir = moonDir;
+        lE = moonE;
+        lmu = dot(dir, moonDir);
+        tAtm = transmittanceToTop(rq, dot(q, moonDir) / rq);
+      }
+      if (lE * tAtm.g <= 0.0) {
+        // Unlit (in the shadow of the Earth for both): extinction only.
+        float stepT0 = exp(-sigma * ds);
+        T *= stepT0;
+        if (opaqueAt == 0.0 && T.g < 0.5) opaqueAt = tc;
+        if (T.g < 0.003) break;
+        continue;
+      }
+      // Light march toward the light through the cloud.
       float od = 0.0;
       float lds = 600.0;
       for (int j = 0; j < 8; j++) {
         if (j >= lightSteps) break;
-        od += cloudSigma(q + sunDir * (lds * (float(j) + 0.5)), fp, lod, false) * lds;
+        od += cloudSigma(q + lDir * (lds * (float(j) + 0.5)), fp, lod, false) * lds;
         lds *= 1.6;
       }
-      float rq = length(q);
-      vec3 tAtm = transmittanceToTop(rq, dot(q, sunDir) / rq);
       // Single scattering (ϖ ≈ 1) plus a diffuse multiple-scattering source sized so that a
       // plane-parallel column of optical depth τ reflects R = τ/(τ + 7.5), the same two-stream
       // relation that inverted the map (sun and view at zenith; Bohren 1987). For a slab,
@@ -334,10 +353,10 @@ const FS = /* glsl */ `
       float Rcol = tauCol / (tauCol + 7.5);
       float SS = PI * SS_PHASE * (1.0 - exp(-2.0 * tauCol)) * 0.5;
       float A = max(Rcol - SS, 0.0) * (1.0 + MS_K) / max(1.0 - exp(-(1.0 + MS_K) * tauCol), 1e-4);
-      float src = PI * phase(mu, 1.0) * exp(-od) + A * exp(-MS_K * od);
+      float src = PI * phase(lmu, 1.0) * exp(-od) + A * exp(-MS_K * od);
       // Skylight: a few percent of the attenuated sunlight, isotropic.
-      vec3 ambient = PI * (tAtm * 0.035 + vec3(0.004, 0.006, 0.01) * smoothstep(-0.1, 0.2, dot(q / rq, sunDir)));
-      vec3 S = sunE * (tAtm * src + ambient);
+      vec3 ambient = PI * (tAtm * 0.035 + vec3(0.004, 0.006, 0.01) * smoothstep(-0.1, 0.2, dot(q / rq, lDir)));
+      vec3 S = lE * (tAtm * src + ambient);
       float stepT = exp(-sigma * ds);
       // Energy-conserving integration over the step (Hillaire 2015, "Physically based
       // and unified volumetric rendering in Frostbite").
@@ -432,6 +451,8 @@ export class CloudPass {
         rTop: { value: 6_471_000 },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         sunE: { value: 1 },
+        moonDir: { value: new THREE.Vector3(0, 0, 1) },
+        moonE: { value: 0 },
         steps: { value: 48 },
         lightSteps: { value: 5 },
         preExposure: PRE_EXPOSURE,
@@ -509,6 +530,8 @@ export class CloudPass {
     u.rTop!.value = p.topRadius;
     u.sunDir!.value.copy(p.sunDir);
     u.sunE!.value = p.sunIrradiance;
+    if (p.moonDir) u.moonDir!.value.copy(p.moonDir);
+    u.moonE!.value = p.moonIrradiance ?? 0;
     u.steps!.value = s.steps;
     u.lightSteps!.value = s.lightSteps;
     u.frame!.value = this.frame++ % 64;
