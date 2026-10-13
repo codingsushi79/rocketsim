@@ -51,8 +51,13 @@ export const MULTISCATTER_SIZE = 32;
 export const ATMOSPHERE_GLSL = /* glsl */ `
   const vec3 BETA_R = vec3(5.802e-6, 13.558e-6, 33.1e-6);
   const float H_R = 8000.0;
-  const float BETA_M_S = 3.996e-6;
-  const float BETA_M_E = 4.40e-6;
+  // Aerosols: an exponential layer (scale height 1.2 km) with optical depth 0.10 at 550 nm,
+  // the global mean (AERONET climatology; Holben et al. 1998, Remote Sens. Environ.
+  // 66:1) — about 35 km horizontal visibility at sea level (Koschmieder, V = 3.912/β) —
+  // and single-scattering albedo 0.9. (The common rendering default, 4.4e-6 /m, is an
+  // optical depth of 0.005: unrealistically clean air.)
+  const float BETA_M_E = 0.10 / 1200.0;
+  const float BETA_M_S = 0.9 * BETA_M_E;
   const float H_M = 1200.0;
   const float MIE_G = 0.8;
   const vec3 BETA_O = vec3(0.650e-6, 1.881e-6, 0.085e-6);
