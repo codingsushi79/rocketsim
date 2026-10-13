@@ -223,11 +223,11 @@ const FS = /* glsl */ `
     float w60 = octave(NOISE_PERIOD.x, fp), w15 = octave(NOISE_PERIOD.y, fp);
     float cov = f, excess = 0.5;
     if (w60 > 0.0) {
-      float n60 = texture(noiseTex, bf / NOISE_PERIOD.x).r;
-      float n15 = w15 > 0.0 ? texture(noiseTex, bf / NOISE_PERIOD.y).r : n60;
+      float n60 = textureLod(noiseTex, bf / NOISE_PERIOD.x, 0.0).r;
+      float n15 = w15 > 0.0 ? textureLod(noiseTex, bf / NOISE_PERIOD.y, 0.0).r : n60;
       float nb = mix(n60, 0.6 * n60 + 0.4 * n15, w15);
       float fu = f * (255.0 / 256.0) + 0.5 / 256.0;
-      float th = mix(texture(noiseQuant, vec2(fu, 0.25)).r, texture(noiseQuant, vec2(fu, 0.75)).r, w15);
+      float th = mix(textureLod(noiseQuant, vec2(fu, 0.25), 0.0).r, textureLod(noiseQuant, vec2(fu, 0.75), 0.0).r, w15);
       // Edge softness at least the noise's change across a pixel (anti-aliasing).
       float edge = 0.03 + 0.1 * (1.0 - w15) + 0.6 * fp / mix(NOISE_PERIOD.x, NOISE_PERIOD.y, w15);
       float c = smoothstep(th - edge, th + edge, nb);
@@ -247,7 +247,7 @@ const FS = /* glsl */ `
     if (fine) {
       float w4 = octave(NOISE_PERIOD.z, fp);
       if (w4 > 0.0) {
-        float n4 = texture(noiseTex, bf / NOISE_PERIOD.z).r;
+        float n4 = textureLod(noiseTex, bf / NOISE_PERIOD.z, 0.0).r;
         float c4 = 0.6 * noiseMean;
         sigma *= mix(1.0, max(0.0, (n4 - c4) / (noiseMean - c4)), 0.6 * w4);
       }
@@ -261,7 +261,8 @@ const FS = /* glsl */ `
     vec4 vd = projInv * vec4(ndc, 0.5, 1.0);
     vec3 viewDir = normalize(vd.xyz / vd.w);
     vec3 dir = normalize((camWorld * vec4(viewDir, 0.0)).xyz);
-    float vz = viewDepth(texture2D(depthTex, vUv).r, ndc);
+    // Exact full-res texel (a half-res texel centre lies on a full-res texel boundary).
+    float vz = viewDepth(texelFetch(depthTex, ivec2(vUv * vec2(textureSize(depthTex, 0))), 0).r, ndc);
     float sceneDist = vz / max(-viewDir.z, 1e-6);
 
     vec3 o = -center;
@@ -281,7 +282,11 @@ const FS = /* glsl */ `
     }
     vec2 ground = hitSphere(o, dir, rGround);
     if (ground.x > 0.0) t1 = min(t1, ground.x);
-    t1 = min(t1, sceneDist);
+    // Terrain occludes the layer, but streamed terrain far away is coarse: a tile's flat
+    // triangles can sit kilometres under the true surface, inside the layer (that cut
+    // the march in tile-shaped patches). Allow the geometric error of the level of detail
+    // shown, a few pixel footprints, which keeps the vehicle's silhouette exact.
+    t1 = min(t1, sceneDist + 8.0 * sceneDist * pixelAngle);
     // From low altitude, the shell is long and grazing: cap the marched distance.
     t1 = min(t1, t0 + 300000.0);
     if (t1 <= t0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); cloudAux = vec4(0.0); return; }
@@ -508,7 +513,7 @@ export class CloudPass {
     u.lightSteps!.value = s.lightSteps;
     u.frame!.value = this.frame++ % 64;
     const half = this.halfTarget(dst.width, dst.height, s.scale);
-    u.pixelAngle!.value = ((camera.fov * Math.PI) / 180) / half.height;
+    u.pixelAngle!.value = ((camera.fov * Math.PI) / 180) / half.height
     const img = u.coverageTex!.value.image as { width?: number } | undefined;
     u.texelMeters!.value = (2 * Math.PI * p.groundRadius) / (img?.width ?? 2048);
     r.setRenderTarget(half);
