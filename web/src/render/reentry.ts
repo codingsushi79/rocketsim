@@ -18,6 +18,7 @@
 
 import * as THREE from "three";
 import { PRE_EXPOSURE } from "./units";
+import { markEmissive } from "./emissive";
 
 import { incandescenceU, wallTemperature } from "./incandescence";
 
@@ -232,6 +233,7 @@ export class ReentryFx {
       }),
     );
     this.sparks.frustumCulled = false;
+    markEmissive(this.sparks);
     this.sparkState.fill(2); // all expired
     this.root.add(this.sparks, this.light);
   }
@@ -248,6 +250,7 @@ export class ReentryFx {
         s.frustumCulled = false;
         s.renderOrder = 5;
         s.visible = false;
+        markEmissive(s);
         m.add(s);
         this.shells.push(s);
       }

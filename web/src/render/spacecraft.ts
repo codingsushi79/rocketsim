@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Telemetry, VehicleDef, Vec3 } from "../sim/vehicle";
 import { PRE_EXPOSURE } from "./units";
+import { markEmissive } from "./emissive";
 import { ReentryFx, addIncandescence } from "./reentry";
 
 /** Exhaust core radiances, U (a sunlit white hull is ≈ 0.8 U). */
@@ -150,6 +151,7 @@ export class VehicleView {
       const plume = new THREE.Mesh(plumeGeometry(1), exhaustMaterial(new THREE.Color(1.0, 0.55, 0.35), PLUME_RADIANCE_U));
       plume.position.set(-len, 0, 0);
       plume.renderOrder = 10;
+      markEmissive(plume);
       node.add(plume);
       v.engines.push({ node, plume, exitRadius: exitR, thrustVac: e.thrust_vac });
     }
@@ -165,6 +167,7 @@ export class VehicleView {
         m.scale.set(0.9, 0.05, 0.05);
         m.renderOrder = 10;
         m.visible = false;
+        markEmissive(m);
         v.model.add(m);
         list.push(m);
       }
@@ -178,6 +181,7 @@ export class VehicleView {
     if (this.boom) return;
     const fire = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), exhaustMaterial(new THREE.Color(1.0, 0.5, 0.18), FIREBALL_RADIANCE_U));
     fire.renderOrder = 11;
+    markEmissive(fire);
     this.root.add(fire);
     const parts: { o: THREE.Object3D; v: THREE.Vector3; w: THREE.Vector3 }[] = [];
     let seed = 7;

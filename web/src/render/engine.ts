@@ -15,6 +15,7 @@ import type { CloudPass, CloudSettings } from "./clouds";
 import { QUAD_VS } from "./glsl";
 import { Glare } from "./glare";
 import { LensEffects, type SunState } from "./lens";
+import { EMISSIVE_LAYER, anyEmissiveShown } from "./emissive";
 
 export type ActiveDepth = "reversed" | "log" | "standard";
 
@@ -31,6 +32,21 @@ export class Engine {
   clouds: CloudPass | null = null;
   cloudSettings: CloudSettings = { steps: 48, lightSteps: 5, scale: 2 };
   private cloudRT!: THREE.WebGLRenderTarget;
+  private fx!: THREE.WebGLRenderTarget;
+  private addQuad = new FullScreenQuad(
+    new THREE.ShaderMaterial({
+      uniforms: { src: { value: null } },
+      vertexShader: QUAD_VS,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D src;
+        varying vec2 vUv;
+        void main() { gl_FragColor = vec4(texture2D(src, vUv).rgb, 1.0); }`,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
   /** Current exposure as a GPU texture (r = exposure, g = metered mean luminance), for
    *  overlays that must keep a fixed display brightness (orbit lines, markers). */
   readonly exposureUniform: { value: THREE.Texture | null } = { value: null };
@@ -231,6 +247,9 @@ export class Engine {
       samples: this.settings.msaa,
     });
     this.composited = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
+    // Emissive effects (emissive.ts): own colour, the scene's resolved depth (test only).
+    this.fx?.dispose();
+    this.fx = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: true, depthTexture });
     this.cloudRT?.dispose();
     this.cloudRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
     this.exposed = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false });
@@ -298,6 +317,23 @@ export class Engine {
       clouds = this.cloudRT.texture;
     }
     this.atmosphere.render(r, this.hdr, this.composited, this.camera, this.depth, atmo, this.settings.atmosphereSteps, clouds);
+
+    // 2a. Emissive effects (plumes, plasma) after clouds and atmosphere, so a cloud
+    // behind a plume can't be composited over it. Depth-tested against the opaque scene.
+    if (anyEmissiveShown(this.scene)) {
+      r.setRenderTarget(this.fx);
+      r.setClearColor(0x000000, 1);
+      r.clear(true, false, false);
+      const autoShadow = r.shadowMap.autoUpdate;
+      r.shadowMap.autoUpdate = false; // shadows were rendered in the main pass
+      this.camera.layers.set(EMISSIVE_LAYER);
+      r.render(this.scene, this.camera);
+      this.camera.layers.set(0);
+      r.shadowMap.autoUpdate = autoShadow;
+      (this.addQuad.material as THREE.ShaderMaterial).uniforms.src!.value = this.fx.texture;
+      r.setRenderTarget(this.composited);
+      this.addQuad.render(r);
+    }
 
     // 2b. Lens: Sun visibility from the frame, then diffraction spikes and ghosts (added
     // before metering, as on a real sensor).
