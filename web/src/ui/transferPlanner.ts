@@ -65,7 +65,12 @@ export class TransferPlanner {
       h("div", { class: "menu-footer" }, h("button", { id: "btn-porkchop", onclick: () => this.compute() }, "Find window")),
       this.canvas,
       this.info,
-      h("div", { class: "menu-footer" }, h("button", { id: "btn-plan-transfer", class: "primary", onclick: () => this.plan() }, "Plan transfer")),
+      h(
+        "div",
+        { class: "menu-footer" },
+        h("button", { id: "btn-correct-course", title: "Retarget the midcourse burn from where you actually are", onclick: () => this.correct() }, "Correct course"),
+        h("button", { id: "btn-plan-transfer", class: "primary", onclick: () => this.plan() }, "Plan transfer"),
+      ),
       this.status,
     );
   }
@@ -93,6 +98,7 @@ export class TransferPlanner {
     const cur = Number(this.targetSel.value || this.sim.targetId);
     clear(this.targetSel);
     for (const b of opts) this.targetSel.append(h("option", { value: String(b.id) }, b.name));
+    if (opts.length === 0) this.targetSel.append(h("option", { value: "", disabled: true, selected: true }, "No transfer targets from here"));
     const want = opts.some((b) => b.id === cur) ? cur : opts.some((b) => b.id === this.sim.targetId) ? this.sim.targetId : opts[0]?.id;
     if (want !== undefined) {
       this.targetSel.value = String(want);
@@ -243,6 +249,15 @@ export class TransferPlanner {
     }
   }
 
+  private correct(): void {
+    if (!this.sim.guidance) {
+      const target = Number(this.targetSel.value);
+      this.sim.guidance = { target, periapsisAltM: Number(this.periInput.value) * 1000 };
+    }
+    this.status.textContent = "Correcting on the n-body propagator…";
+    setTimeout(() => (this.status.textContent = this.sim.correctCourse()), 20);
+  }
+
   private plan(): void {
     const g = this.grid;
     if (!g || this.sel < 0) {
@@ -258,8 +273,9 @@ export class TransferPlanner {
       const res = JSON.parse(this.sim.sim.transferPlan(target, g.dep[i]!, g.tof[j]!, peri)) as { ok: boolean; error?: string; nodes?: { dv: number }[]; miss?: number };
       if (res.ok) {
         this.sim.setTarget(target);
+        this.sim.guidance = { target, periapsisAltM: peri };
         const dvs = res.nodes!.map((n) => `${n.dv.toFixed(1)}`).join(" + ");
-        this.status.textContent = `Planned in ${((performance.now() - t) / 1000).toFixed(1)} s: departure + midcourse = ${dvs} m/s; periapsis within ${(Math.abs(res.miss!) / 1000).toFixed(1)} km. Execute the nodes in the plan panel.`;
+        this.status.textContent = `Planned in ${((performance.now() - t) / 1000).toFixed(1)} s: departure + midcourse = ${dvs} m/s; periapsis within ${(Math.abs(res.miss!) / 1000).toFixed(1)} km. Execute them from the plan panel (Execute all flies both and corrects the course after each burn).`;
       } else this.status.textContent = `Could not plan: ${res.error}`;
     }, 20);
   }

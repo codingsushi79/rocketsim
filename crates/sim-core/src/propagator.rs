@@ -74,6 +74,11 @@ pub enum BurnDirection {
     /// Away from / toward the center.
     RadialOut,
     RadialIn,
+    /// Fixed in the rotating orbit frame (prograde v̂, normal (r×v)̂, radial v̂×n̂):
+    /// unit components (prograde, normal, radial). A long burn then turns with the arc
+    /// it spans instead of holding one inertial vector, which wastes Δv once the burn
+    /// covers tens of degrees of orbit (a 13-minute TLI from LEO covers ~50°).
+    Orbital(V3),
 }
 
 /// A finite burn with constant thrust between `start` and `end`.
@@ -541,6 +546,7 @@ impl ArcModel<'_> {
                 BurnDirection::AntiNormal => -r.cross(v).normalized().unwrap_or(V3::ZERO),
                 BurnDirection::RadialOut => r.normalized().unwrap_or(V3::ZERO),
                 BurnDirection::RadialIn => -r.normalized().unwrap_or(V3::ZERO),
+                BurnDirection::Orbital(c) => orbital_direction(r, v, c),
             };
             a += dir * (b.thrust / mass);
             mdot = match b.mass_flow {
@@ -1180,6 +1186,18 @@ fn last_burn_matches(arc: &Arc, active: Option<&Burn>, burns: &[Burn]) -> bool {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
+}
+
+/// Inertial direction of orbit-frame components `c` = (prograde, normal, radial) for the
+/// state (r, v) relative to the centre (same frame as `maneuver::orbit_frame`).
+pub fn orbital_direction(r: V3, v: V3, c: V3) -> V3 {
+    let (Some(pro), Some(nrm)) = (v.normalized(), r.cross(v).normalized()) else {
+        return V3::ZERO;
+    };
+    let rad = pro.cross(nrm);
+    (pro * c.x + nrm * c.y + rad * c.z)
+        .normalized()
+        .unwrap_or(V3::ZERO)
 }
 
 #[cfg(test)]

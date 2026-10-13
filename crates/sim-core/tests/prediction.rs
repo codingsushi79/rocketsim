@@ -256,7 +256,7 @@ fn autopilot_flies_the_planned_burn() {
     )
     .unwrap();
     let b = plan.burns[0];
-    f.arm_autopilot(b.start, b.direction, dv);
+    f.arm_autopilot(b.start, b.direction, b.frame, dv);
     let c = Controls {
         sas: SasMode::Hold,
         ..Controls::default()

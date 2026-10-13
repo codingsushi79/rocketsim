@@ -67,6 +67,9 @@ pub struct PlannedBurn {
     pub center: BodyId,
     pub direction: V3,
     pub dv_vector: V3,
+    /// The burn direction in the orbit frame (prograde, normal, radial; unit): it is
+    /// held there for the whole burn (`BurnDirection::Orbital`).
+    pub frame: V3,
     pub start: Epoch,
     /// Burn time at full thrust, s (0 for a zero node, NaN without an engine).
     pub duration: f64,
@@ -119,11 +122,15 @@ pub fn predict(
         let dv_vec = pro * node.prograde + nrm * node.normal + rad * node.radial;
         let dv = dv_vec.norm();
         let direction = dv_vec.normalized().unwrap_or(pro);
+        let frame = V3::new(node.prograde, node.normal, node.radial)
+            .normalized()
+            .unwrap_or(V3::X);
         let mut pb = PlannedBurn {
             node,
             center: s.state.frame.center,
             direction,
             dv_vector: dv_vec,
+            frame,
             start: t_node,
             duration: 0.0,
             mass_before: s.mass,
@@ -153,7 +160,7 @@ pub fn predict(
                     end: start.add_seconds(duration),
                     thrust: e.thrust,
                     isp: e.isp,
-                    direction: BurnDirection::Inertial(direction),
+                    direction: BurnDirection::Orbital(frame),
                     mass_flow: None,
                 });
                 p.extend(&mut traj, start, &burns)?;

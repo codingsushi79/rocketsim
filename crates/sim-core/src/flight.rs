@@ -38,6 +38,7 @@ use crate::math::{Quat, V3, fmath};
 use crate::orientation;
 use crate::propagator::{
     ArcEnd, Ballistic, Burn, BurnDirection, PropagationError, Propagator, ScState, Trajectory,
+    orbital_direction,
 };
 use crate::rcs_alloc::{self, Wrench};
 use crate::time::Epoch;
@@ -205,19 +206,37 @@ pub enum AutopilotPhase {
     Done,
 }
 
-/// Executes one planned burn: SAS on the (inertially fixed) node vector, ignition at
-/// `start`, cutoff when the Δv delivered along `direction` reaches `dv`.
+/// Executes one planned burn: SAS on the node vector, held fixed in the orbit frame
+/// (`frame`; it turns with the arc, as the prediction models it), ignition at `start`,
+/// cutoff when the Δv delivered along the (turning) direction reaches `dv`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BurnAutopilot {
     pub start: Epoch,
+    /// Current burn direction (ICRF unit) and its orbit-frame components.
     pub direction: V3,
+    pub frame: V3,
     pub dv: f64,
     /// Δv delivered along `direction` so far, and the full delivered vector (ICRF), m/s.
     pub delivered: f64,
     pub delivered_vector: V3,
+    /// Σ|Δv| and Σ|Δv|·(angle between thrust and the commanded direction), for the mean
+    /// pointing error.
+    pub dv_abs: f64,
+    pub pointing_sum: f64,
     pub phase: AutopilotPhase,
     pub ignition: Option<Epoch>,
     pub cutoff: Option<Epoch>,
+}
+
+impl BurnAutopilot {
+    /// Δv-weighted mean angle between the thrust and the commanded direction, rad.
+    pub fn pointing_error(&self) -> f64 {
+        if self.dv_abs > 0.0 {
+            self.pointing_sum / self.dv_abs
+        } else {
+            0.0
+        }
+    }
 }
 
 /// What the HUD shows. All SI.
@@ -422,15 +441,18 @@ impl Flight {
     }
 
     /// Arm the burn autopilot (replacing any previous one).
-    pub fn arm_autopilot(&mut self, start: Epoch, direction: V3, dv: f64) {
+    pub fn arm_autopilot(&mut self, start: Epoch, direction: V3, frame: V3, dv: f64) {
         let direction = direction.normalized().unwrap_or(V3::X);
         self.maneuver = Some(direction);
         self.autopilot = Some(BurnAutopilot {
             start,
             direction,
+            frame: frame.normalized().unwrap_or(V3::X),
             dv: dv.max(0.0),
             delivered: 0.0,
             delivered_vector: V3::ZERO,
+            dv_abs: 0.0,
+            pointing_sum: 0.0,
             phase: AutopilotPhase::Aligning,
             ignition: None,
             cutoff: None,
@@ -459,6 +481,12 @@ impl Flight {
             throttle: 0.0,
             ..*c
         };
+        if let Some(s) = self.traj.state_at(t0) {
+            let d = orbital_direction(s.state.r, s.state.v, ap.frame);
+            if d.norm() > 0.0 {
+                ap.direction = d;
+            }
+        }
         self.maneuver = Some(ap.direction);
         if ap.phase == AutopilotPhase::Aligning && t0.seconds_since(ap.start) >= 0.0 {
             ap.phase = AutopilotPhase::Burning;
@@ -686,7 +714,18 @@ impl Flight {
         self.t_state = until;
         self.on_grid = false;
         self.check_termination();
-        // An armed autopilot keeps the vehicle on the node vector.
+        // An armed autopilot keeps the vehicle on the node vector (turning with the orbit
+        // frame while it waits).
+        if let Some(ap) = self.autopilot.as_mut()
+            && ap.phase == AutopilotPhase::Aligning
+            && let Some(st) = self.traj.state_at(until)
+        {
+            let d = orbital_direction(st.state.r, st.state.v, ap.frame);
+            if d.norm() > 0.0 {
+                ap.direction = d;
+                self.maneuver = Some(d);
+            }
+        }
         let ap_c;
         let c = if self
             .autopilot
@@ -962,6 +1001,12 @@ impl Flight {
                 let dv = f_i * (dt / m_mid);
                 ap.delivered += dv.dot(ap.direction);
                 ap.delivered_vector += dv;
+                let n = dv.norm();
+                if n > 0.0 {
+                    let c = (dv.dot(ap.direction) / n).clamp(-1.0, 1.0);
+                    ap.dv_abs += n;
+                    ap.pointing_sum += n * fmath::acos(c);
+                }
             }
             vec![Burn {
                 start: t0,

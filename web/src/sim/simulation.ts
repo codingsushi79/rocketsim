@@ -157,6 +157,49 @@ export class Simulation {
   /** Transient on-screen message. */
   notice: { text: string; until: number } | null = null;
   private frame = 0;
+  /** Transfer guidance (set by the planner): after every autopilot burn the plan's last
+   *  node is retargeted from the actual state (a real mission's course correction). */
+  guidance: { target: number; periapsisAltM: number } | null = null;
+  /** Execute every node in turn with the autopilot (set by "Execute all"). */
+  autoExecute = false;
+  private lastApPhase = "";
+
+  /** Arm the autopilot on the next node; returns an error message or null. */
+  executeNext(): string | null {
+    try {
+      this.sim.executeNode(0);
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  }
+
+  /** Retarget the last future node from the current state; a summary for the notice. */
+  correctCourse(): string {
+    const g = this.guidance;
+    if (!g) return "No transfer target";
+    const r = JSON.parse(this.sim.correctCourse(g.target, g.periapsisAltM)) as { ok: boolean; dv?: number; before?: number; miss?: number; error?: string };
+    this.planCache.wall = -1e9;
+    return r.ok ? `Course corrected: midcourse ${r.before!.toFixed(1)} → ${r.dv!.toFixed(1)} m/s (periapsis within ${(Math.abs(r.miss!) / 1000).toFixed(1)} km)` : `Course correction failed: ${r.error}`;
+  }
+
+  /** After each autopilot burn: correct the course, then arm the next node if asked. */
+  private afterBurns(): void {
+    const ap = JSON.parse(this.sim.autopilotJson()) as AutopilotJson | null;
+    const phase = ap?.phase ?? "none";
+    const finished = phase === "done" && this.lastApPhase === "burning";
+    this.lastApPhase = phase;
+    if (!finished) return;
+    const plan = JSON.parse(this.sim.planJson()) as PlanJson;
+    let msg = "Burn complete";
+    if (this.guidance && plan.nodes.length > 0) msg = this.correctCourse();
+    const next = JSON.parse(this.sim.planJson()) as PlanJson;
+    if (this.autoExecute && next.nodes.length > 0) {
+      const e = this.executeNext();
+      msg += e ? ` · could not arm the next node: ${e}` : " · next node armed";
+    } else if (next.nodes.length === 0) this.autoExecute = false;
+    this.notice = { text: msg, until: performance.now() + 8000 };
+  }
 
   /** Load ephemeris for the decade of `epochUtc`, falling back to the CI subset. */
   async loadEphemeris(epochUtc: string, onProgress?: (msg: string) => void): Promise<void> {
@@ -197,6 +240,9 @@ export class Simulation {
     this.warpIndex = 0;
     this.paused = false;
     this.targetId = -1;
+    this.guidance = null;
+    this.autoExecute = false;
+    this.lastApPhase = "";
     if (sc.target !== undefined && sc.vehicle) this.setTarget(sc.target);
   }
 
@@ -277,6 +323,7 @@ export class Simulation {
         };
         break;
       }
+      if (this.hasVehicle) this.afterBurns();
       if (performance.now() - t0 > FRAME_BUDGET_MS && done < want) {
         this.warpLimited = true;
         break;

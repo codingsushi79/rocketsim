@@ -652,7 +652,22 @@ export class MapView {
           { class: "menu-footer" },
           h("button", { onclick: () => this.deleteSelected() }, "Delete"),
           ap && ap.phase !== "done"
-            ? h("button", { onclick: () => (this.sim.sim.cancelAutopilot(), (this.slowT = 1e9)) }, "Abort autopilot")
+            ? h("button", { onclick: () => (this.sim.sim.cancelAutopilot(), (this.sim.autoExecute = false), (this.slowT = 1e9)) }, "Abort autopilot")
+            : h(
+                "button",
+                {
+                  title: "Fly every node in turn; with a transfer target, correct the course after each burn",
+                  onclick: () => {
+                    this.sim.autoExecute = true;
+                    const e = this.sim.executeNext();
+                    if (e) console.warn(e);
+                    this.slowT = 1e9;
+                  },
+                },
+                "Execute all",
+              ),
+          ap && ap.phase !== "done"
+            ? null
             : h(
                 "button",
                 {

@@ -615,6 +615,65 @@ impl Sim {
         self.flight = Some(f);
         self.update_prediction();
         self.update_debris();
+        self.make_burn_report();
+    }
+
+    /// The burn report, once the prediction has been rebuilt after cutoff.
+    fn make_burn_report(&mut self) {
+        let (Some(ex), Some(f), Some(pred)) = (&self.execution, &self.flight, &self.pred) else {
+            return;
+        };
+        let (Some(ap), None) = (ex.done, &ex.report) else {
+            return;
+        };
+        let Some(cut) = ap.cutoff else { return };
+        if self.pred_start.seconds_since(cut) < 0.0 {
+            return;
+        }
+        // Planned vs actual at cutoff, in the planned state's frame.
+        let planned = ex.plan.traj.state_at(cut);
+        let actual = f.state_at(cut);
+        let same = |p: &ScState, a: &ScState| p.state.frame.center == a.state.frame.center;
+        let target = f.target;
+        let first = |traj: &Trajectory, kind: fn(&MarkerKind) -> bool| {
+            prediction::markers(&self.eph, &self.reg, traj, cut, target)
+                .into_iter()
+                .find(|m| kind(&m.kind))
+        };
+        let mut cmp = Vec::new();
+        for (label, kind) in [
+            (
+                "Periapsis",
+                (|k: &MarkerKind| *k == MarkerKind::Periapsis) as fn(&MarkerKind) -> bool,
+            ),
+            ("Apoapsis", |k: &MarkerKind| *k == MarkerKind::Apoapsis),
+            ("Closest approach", |k: &MarkerKind| {
+                *k == MarkerKind::ClosestApproach
+            }),
+        ] {
+            if let (Some(p), Some(a)) = (first(&ex.plan.traj, kind), first(pred, kind)) {
+                cmp.push(json!({"label": label, "planned": p.value, "actual": a.value,
+                                "dtPlanned": p.epoch.seconds_since(cut), "dtActual": a.epoch.seconds_since(cut)}));
+            }
+        }
+        let (pos, vel) = match (planned, actual) {
+            (Some(p), Some(a)) if same(&p, &a) => (
+                (p.state.r - a.state.r).norm(),
+                (p.state.v - a.state.v).norm(),
+            ),
+            _ => (f64::NAN, f64::NAN),
+        };
+        let report = json!({
+            "dvPlanned": ex.burn.dv_vector.norm(),
+            "dvDelivered": ap.delivered,
+            "pointingDeg": ap.pointing_error().to_degrees(),
+            "posErr": pos,
+            "velErr": vel,
+            "compare": cmp,
+        });
+        if let Some(ex) = &mut self.execution {
+            ex.report = Some(report);
+        }
     }
 
     /// Keep the coast prediction current: rebuilt after thrust (rate-limited), else
@@ -1070,6 +1129,99 @@ impl Sim {
         }
     }
 
+    /// Course correction (as flown after every real departure burn): retarget the last
+    /// future node (or a new one at 30 % of the way to the closest approach) so the closest
+    /// approach to `target` is `periapsis_alt` above its surface, on the full n-body
+    /// prediction from the current state, with the minimum-norm Δv (`transfer::correct`).
+    #[wasm_bindgen(js_name = correctCourse)]
+    pub fn correct_course(&mut self, target: i32, periapsis_alt: f64) -> String {
+        let err = |e: &str| json!({"ok": false, "error": e}).to_string();
+        if self
+            .flight
+            .as_ref()
+            .and_then(|f| f.autopilot())
+            .is_some_and(|a| a.phase == AutopilotPhase::Burning)
+        {
+            return err("a burn is in progress");
+        }
+        let Some(s0) = self.current_state() else {
+            return err("no state");
+        };
+        let tgt = BodyId(target);
+        let r_p = self.reg.get(tgt).map_or(0.0, |b| b.radii.equatorial_mean()) + periapsis_alt;
+        let engine = self
+            .flight
+            .as_ref()
+            .and_then(|f| f.engine_model())
+            .map(|(e, _)| e);
+        let p = self.propagator();
+        let policy = self.policy;
+        // Future nodes only (at least a minute out, so the burn can be aligned).
+        let mut nodes: Vec<ManeuverNode> = self.plan.legs[0]
+            .nodes
+            .iter()
+            .copied()
+            .filter(|n| n.epoch().seconds_since(self.epoch) > 60.0)
+            .collect();
+        if nodes.is_empty() {
+            let t_ca = match transfer::closest_approach(
+                &p,
+                &self.eph,
+                &self.reg,
+                &s0,
+                &[],
+                engine,
+                &policy,
+                tgt,
+            ) {
+                Ok((_, t)) => t,
+                Err(e) => return err(&e.to_string()),
+            };
+            let lead = (0.3 * t_ca.seconds_since(self.epoch)).max(600.0);
+            nodes.push(ManeuverNode::new(
+                self.epoch.add_seconds(lead),
+                0.0,
+                0.0,
+                0.0,
+            ));
+        }
+        let before = nodes.last().map_or(0.0, |n| n.dv_magnitude());
+        match transfer::correct(
+            &p,
+            &self.eph,
+            &self.reg,
+            &s0,
+            &nodes,
+            engine,
+            &policy,
+            tgt,
+            r_p,
+            0.01 * r_p.max(20e3),
+        ) {
+            Ok((node, miss)) => {
+                let last = nodes.len() - 1;
+                nodes[last] = node;
+                // Keep past nodes untouched; replace the future ones.
+                let now = self.epoch;
+                let mut all: Vec<ManeuverNode> = self.plan.legs[0]
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter(|n| n.epoch().seconds_since(now) <= 60.0)
+                    .collect();
+                all.extend(nodes);
+                self.plan.legs[0].nodes = all;
+                if let Some(f) = &mut self.flight {
+                    f.target = Some(tgt);
+                }
+                self.plan_dirty = true;
+                self.rebuild_plan();
+                json!({"ok": true, "dv": node.dv_magnitude(), "before": before, "miss": miss, "t": node.epoch_tdb}).to_string()
+            }
+            Err(e) => err(&e.to_string()),
+        }
+    }
+
     #[wasm_bindgen(js_name = setTarget)]
     pub fn set_target(&mut self, body: i32) {
         if let Some(f) = &mut self.flight {
@@ -1298,6 +1450,9 @@ struct Execution {
     burn: PlannedBurn,
     plan: Prediction,
     done: Option<BurnAutopilot>,
+    /// Planned-vs-actual report, made once, from the first prediction after cutoff (later
+    /// the flight's stored path is pruned and its centre may change).
+    report: Option<Value>,
 }
 
 fn marker_json(m: &Marker, now: Epoch) -> Value {
@@ -1539,11 +1694,17 @@ impl Sim {
             .flight
             .as_mut()
             .ok_or_else(|| JsError::new("no flight"))?;
-        f.arm_autopilot(burn.start, burn.direction, burn.dv_vector.norm());
+        f.arm_autopilot(
+            burn.start,
+            burn.direction,
+            burn.frame,
+            burn.dv_vector.norm(),
+        );
         self.execution = Some(Execution {
             burn,
             plan,
             done: None,
+            report: None,
         });
         Ok(())
     }
@@ -1597,45 +1758,8 @@ impl Sim {
             "delivered": ap.delivered,
             "duration": ex.burn.duration,
         });
-        if let Some(cut) = ap.cutoff {
-            // Planned vs actual at cutoff, and the next apsides / closest approach.
-            let planned = ex.plan.traj.state_at(cut);
-            let actual = f.state_at(cut);
-            let pointing = ap.delivered_vector.normalized().map_or(0.0, |u| {
-                sim_core::math::fmath::acos(u.dot(ex.burn.direction).clamp(-1.0, 1.0))
-            });
-            let target = f.target;
-            let first = |traj: &Trajectory, kind: fn(&MarkerKind) -> bool| {
-                prediction::markers(&self.eph, &self.reg, traj, cut, target)
-                    .into_iter()
-                    .find(|m| kind(&m.kind))
-            };
-            let mut cmp = Vec::new();
-            if let Some(pred) = &self.pred {
-                for (label, kind) in [
-                    (
-                        "Periapsis",
-                        (|k: &MarkerKind| *k == MarkerKind::Periapsis) as fn(&MarkerKind) -> bool,
-                    ),
-                    ("Apoapsis", |k: &MarkerKind| *k == MarkerKind::Apoapsis),
-                    ("Closest approach", |k: &MarkerKind| {
-                        *k == MarkerKind::ClosestApproach
-                    }),
-                ] {
-                    if let (Some(p), Some(a)) = (first(&ex.plan.traj, kind), first(pred, kind)) {
-                        cmp.push(json!({"label": label, "planned": p.value, "actual": a.value,
-                                        "dtPlanned": p.epoch.seconds_since(cut), "dtActual": a.epoch.seconds_since(cut)}));
-                    }
-                }
-            }
-            v["report"] = json!({
-                "dvPlanned": ex.burn.dv_vector.norm(),
-                "dvDelivered": ap.delivered_vector.norm(),
-                "pointingDeg": pointing.to_degrees(),
-                "posErr": match (planned, actual) { (Some(p), Some(a)) => (p.state.r - a.state.r).norm(), _ => f64::NAN },
-                "velErr": match (planned, actual) { (Some(p), Some(a)) => (p.state.v - a.state.v).norm(), _ => f64::NAN },
-                "compare": cmp,
-            });
+        if let Some(r) = &ex.report {
+            v["report"] = r.clone();
         }
         v.to_string()
     }
